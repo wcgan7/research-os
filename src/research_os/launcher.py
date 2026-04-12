@@ -65,6 +65,13 @@ research-os tool call {review_id} query_store '{{"record_type": "papers", "filte
 - **export_bibtex**: Export citations. Args: `{{"paper_ids": [...]}}`
 - **execute_code**: Run code. Args: `{{"code": "...", "language": "python|bash"}}`
 
+## Important: Your available tools
+
+You have these tools — use them directly, **never call ToolSearch**:
+- **Bash**: Run `research-os tool call ...` commands
+- **Read**, **Grep**, **Glob**: Read files
+- **WebSearch**: Search the web (described below)
+
 ## Web Search (USE THIS — it's critical for completeness)
 
 You have a native **WebSearch** tool — use it directly (not through search_papers) to:
@@ -85,10 +92,10 @@ When web search reveals a paper, use **seed_paper** to add it by arXiv URL/ID or
 - **Start with WebSearch** to get the lay of the land — search for recent surveys, blog posts, \
 and "awesome" lists about the topic. This gives you the latest landscape faster than academic APIs.
 - Then search academic sources (semantic_scholar, arxiv, openalex) for systematic coverage
-- **Search adjacent areas too** — don't just search the exact topic. Explore related techniques, \
-upstream problems, downstream applications, and alternative approaches. A comprehensive review \
-covers the broader ecosystem, not just a narrow slice. For example, if reviewing "KV cache compression," \
-also search for efficient attention, memory-efficient inference, model compression for serving, etc.
+- **Search adjacent areas strategically** — explore related techniques, upstream problems, and \
+downstream applications. But craft each query to be specific enough to mostly return relevant papers. \
+For example, "KV cache quantization inference" is better than "model compression" (too broad). \
+Before each new search, check query_store to avoid redundant queries.
 - Use WebSearch again for specific recent papers or papers with unusual names that APIs miss
 - When WebSearch reveals papers, use seed_paper to add them by arXiv URL/ID or DOI
 - Seed any landmark papers you know by arXiv ID
@@ -101,7 +108,8 @@ also search for efficient attention, memory-efficient inference, model compressi
 ### Phase 3: Deep Exploration
 - expand_references on essential papers to find related work
 - WebSearch for specific papers mentioned in key works but not yet in the database
-- Look for code repos, datasets, and benchmarks — use update_paper_resources
+- **Track resources eagerly**: For each essential/relevant paper, immediately search for and record \
+code repos, datasets, demos, and blog posts using update_paper_resources. Don't defer this to later.
 
 ### Phase 4: Gap Filling
 - save_coverage to assess what's missing
@@ -131,9 +139,10 @@ Twitter/X, blog posts, and conference pages before academic APIs index them.
 
 ### Key Principles
 - **Balance discovery and assessment**: Don't spend all your turns searching. Triage early and often.
-- **Track resources diligently**: Code repos, datasets, demos — these are what researchers actually need
-- **Note contradictions**: When papers disagree, record it
-- **Don't repeat searches**: Use query_store to check past searches before searching again
+- **Track resources diligently**: After assessing essential papers, use update_paper_resources and \
+WebSearch to find their code, datasets, demos. Resources are what researchers need most.
+- **Note contradictions and surprises**: Use save_note when papers disagree or findings are unexpected
+- **Don't repeat searches**: Call query_store to check past searches BEFORE every new search_papers call
 - **Always produce a report**: Even if you run low on turns, synthesize what you have
 """
 

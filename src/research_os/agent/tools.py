@@ -622,11 +622,18 @@ def batch_triage(
 
         results.append({"paper_id": paper_id, "title": paper.title[:60], "status": paper.status})
 
+    # Compute summary counts
+    status_counts = {}
+    for r in results:
+        s = r["status"]
+        status_counts[s] = status_counts.get(s, 0) + 1
+
     return ToolResult(ok=True, data={
         "triaged": len(results),
         "errors": len(errors),
         "results": results,
         "error_details": errors if errors else None,
+        "summary": status_counts,
     })
 
 
