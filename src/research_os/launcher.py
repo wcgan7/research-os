@@ -58,10 +58,10 @@ research-os tool call {review_id} query_store '{{"record_type": "papers", "filte
 - **update_paper_status**: Change status. Args: `{{"paper_id": "...", "status": "discovered|seed|reviewed|relevant|not_relevant|uncertain|deferred"}}`
 - **update_paper_resources**: Attach resources (code, datasets, demos, blogs, etc.). Args: `{{"paper_id": "...", "resources": [{{"type": "code|dataset|demo|blog|benchmark|other", "url": "...", "description": "..."}}]}}`
 - **save_coverage**: Coverage check. Args: `{{"areas_covered": [...], "gaps": [...], "confidence": 0.0-1.0, "next_actions": [...], "summary": "..."}}`
-- **save_sota_summary**: SOTA summary (most important output). Args: `{{"best_methods": [...], "key_benchmarks": [...], "open_source_implementations": [...], "open_problems": [...], "trends": [...], "summary": "...", "paper_ids": [...]}}`
+- **save_review_report**: The final deliverable — a structured literature review report with sections: landscape, methods, sota, resources, gaps, trends, conclusions. Each section is prose markdown.
 - **save_note**: Research note. Args: `{{"kind": "question|gap|contradiction|baseline_candidate|tool_wish|strategy_note|observation|assumption|next_step", "content": "..."}}`
 - **seed_paper**: Add paper by URL/ID. Args: `{{"url_or_id": "..."}}`
-- **query_store**: Read records. Args: `{{"record_type": "papers|assessments|searches|coverage|notes|sota", "filters": {{}}}}`
+- **query_store**: Read records. Args: `{{"record_type": "papers|assessments|searches|coverage|notes|report", "filters": {{}}}}`
 - **export_bibtex**: Export citations. Args: `{{"paper_ids": [...]}}`
 - **execute_code**: Run code. Args: `{{"code": "...", "language": "python|bash"}}`
 
@@ -108,14 +108,18 @@ Twitter/X, blog posts, and conference pages before academic APIs index them.
 - Triage any new discoveries immediately
 
 ### Phase 5: Synthesis (CRITICAL — don't skip this)
-- save_sota_summary: the most important deliverable. Must include:
-  - Best methods with quantitative comparisons where possible
-  - Key benchmarks and datasets used in the field
-  - Available open-source implementations with URLs
-  - Open problems and limitations
-  - Emerging trends and future directions
+- **save_review_report**: the most important deliverable. Write a real literature review with:
+  - **landscape**: Taxonomy and overview of the field — what categories of approaches exist
+  - **methods**: Detailed comparison of major methods with tradeoffs and results
+  - **sota**: Current state-of-the-art — what works best, on which benchmarks, under what conditions
+  - **resources**: Available code (with URLs), datasets, benchmarks, tools
+  - **gaps**: Open problems, limitations, under-explored areas
+  - **trends**: Where the field is heading, recent shifts, emerging directions
+  - **conclusions**: What a researcher starting in this area should know
 - Final save_coverage assessment
 - save_note for any remaining questions or observations
+
+Write each section as prose markdown, not bullet lists. A good report reads like a survey paper.
 
 ### Key Principles
 - **Balance discovery and assessment**: Don't spend all your turns searching. Triage early and often.

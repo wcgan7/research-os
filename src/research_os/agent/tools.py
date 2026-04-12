@@ -12,6 +12,7 @@ from research_os.store.models import (
     CoverageAssessment,
     Paper,
     ReviewNote,
+    ReviewReport,
     SearchRecord,
     SotaSummary,
 )
@@ -359,6 +360,7 @@ def query_store(ctx: ToolContext, record_type: str, filters: dict | None = None)
         "notes": ReviewNote,
         "capability_requests": CapabilityRequest,
         "sota": SotaSummary,
+        "report": ReviewReport,
     }
 
     cls = type_map.get(record_type)
@@ -660,6 +662,41 @@ def save_sota_summary(
     return ToolResult(ok=True, data={"sota_id": sota.id})
 
 
+def save_review_report(
+    ctx: ToolContext,
+    landscape: str,
+    methods: str,
+    sota: str,
+    resources: str,
+    gaps: str,
+    trends: str,
+    conclusions: str,
+    paper_ids: list[str] | None = None,
+) -> ToolResult:
+    """Save the final literature review report.
+
+    Each section is a prose markdown text covering a different aspect of the review.
+    This is the most important deliverable — it should synthesize everything you learned
+    into a coherent document that a researcher can read to understand the field.
+    """
+    store: Store = ctx["store"]
+    review_id: str = ctx["review_id"]
+
+    report = ReviewReport(
+        review_id=review_id,
+        landscape=landscape,
+        methods=methods,
+        sota=sota,
+        resources=resources,
+        gaps=gaps,
+        trends=trends,
+        conclusions=conclusions,
+        paper_ids=paper_ids or [],
+    )
+    store.save(report)
+    return ToolResult(ok=True, data={"report_id": report.id})
+
+
 def update_paper_resources(
     ctx: ToolContext,
     paper_id: str,
@@ -931,44 +968,25 @@ TOOL_DEFINITIONS: list[dict] = [
         },
     },
     {
-        "name": "save_sota_summary",
-        "description": "Record a state-of-the-art summary. Call this as a final step to capture: best methods with metrics, key benchmarks/datasets, available open-source implementations, open problems, and trends. This is the most important output of a complete literature review.",
+        "name": "save_review_report",
+        "description": "Save the final literature review report. This is the most important deliverable — a synthesized document covering the entire research landscape. Each section is a prose markdown string. Write each section as if for a research colleague who needs to understand the field quickly.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "best_methods": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Ranked list of best methods with key metrics (e.g., 'MethodX: 2.1x compression with <1% accuracy loss on LLaMA-7B')",
-                },
-                "key_benchmarks": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Important benchmark datasets and evaluation protocols used in the field",
-                },
-                "open_source_implementations": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Available open-source code repos (e.g., 'github.com/org/repo - implements MethodX')",
-                },
-                "open_problems": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Important unsolved problems or limitations",
-                },
-                "trends": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Recent trends and emerging directions",
-                },
-                "summary": {"type": "string", "description": "Prose summary of the state of the art"},
+                "landscape": {"type": "string", "description": "Overview and taxonomy of the field: what categories of approaches exist, how they relate, key concepts"},
+                "methods": {"type": "string", "description": "Detailed comparison of major methods: how they work, their tradeoffs, quantitative results where available"},
+                "sota": {"type": "string", "description": "Current state-of-the-art: what achieves the best results, on which benchmarks, under what conditions"},
+                "resources": {"type": "string", "description": "Available resources: open-source implementations (with URLs), datasets, benchmarks, tools, demos"},
+                "gaps": {"type": "string", "description": "Open problems, limitations of current approaches, under-explored areas"},
+                "trends": {"type": "string", "description": "Emerging directions, recent shifts in the field, where things are heading"},
+                "conclusions": {"type": "string", "description": "Key takeaways: what a researcher starting in this area should know, recommendations"},
                 "paper_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Paper IDs that support this summary",
+                    "description": "Paper IDs that support this report",
                 },
             },
-            "required": ["best_methods", "key_benchmarks", "open_source_implementations", "open_problems", "trends", "summary"],
+            "required": ["landscape", "methods", "sota", "resources", "gaps", "trends", "conclusions"],
         },
     },
     {
@@ -1014,6 +1032,7 @@ TOOL_FUNCTIONS: dict[str, callable] = {
     "export_bibtex": export_bibtex,
     "execute_code": execute_code,
     "batch_triage": batch_triage,
-    "save_sota_summary": save_sota_summary,
+    "save_sota_summary": save_sota_summary,  # backward compat
+    "save_review_report": save_review_report,
     "update_paper_resources": update_paper_resources,
 }

@@ -117,6 +117,7 @@ def review_summary(review_id: str):
         CoverageAssessment,
         Paper,
         ReviewNote,
+        ReviewReport,
         SearchRecord,
         LiteratureReview,
         SotaSummary,
@@ -140,6 +141,7 @@ def review_summary(review_id: str):
     notes = store.query(ReviewNote, review_id=review_id)
     coverages = store.query(CoverageAssessment, review_id=review_id)
     sotas = store.query(SotaSummary, review_id=review_id)
+    reports = store.query(ReviewReport, review_id=review_id)
 
     status_counts: dict[str, int] = {}
     for p in papers:
@@ -170,6 +172,7 @@ def review_summary(review_id: str):
                 "gaps": coverages[0].gaps,
                 "areas_covered": coverages[0].areas_covered,
             } if coverages else None,
+            "has_review_report": len(reports) > 0,
             "has_sota_summary": len(sotas) > 0,
             "recent_notes": [
                 {"kind": n.kind, "content": n.content[:200]}

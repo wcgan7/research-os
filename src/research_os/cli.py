@@ -23,6 +23,7 @@ from research_os.store.models import (
     LiteratureReview,
     Paper,
     ReviewNote,
+    ReviewReport,
     SearchRecord,
     SotaSummary,
 )
@@ -141,6 +142,7 @@ def lit_status(review_id: str):
     notes = store.query(ReviewNote, review_id=review.id)
     coverages = store.query(CoverageAssessment, review_id=review.id)
     sotas = store.query(SotaSummary, review_id=review.id)
+    reports = store.query(ReviewReport, review_id=review.id)
 
     # Count papers by status
     status_counts: dict[str, int] = {}
@@ -160,7 +162,9 @@ def lit_status(review_id: str):
     panel_text += f"Notes: {len(notes)}\n"
     if papers_with_resources:
         panel_text += f"Papers with resources: {papers_with_resources}\n"
-    panel_text += f"SOTA summary: {'Yes' if sotas else 'No'}\n"
+    panel_text += f"Review report: {'Yes' if reports else 'No'}\n"
+    if not reports and sotas:
+        panel_text += f"Legacy SOTA summary: Yes\n"
 
     if coverages:
         latest = coverages[0]
@@ -377,45 +381,43 @@ def lit_bibtex(review_id: str, output: str | None):
         console.print(f"\n[dim]{count} entries[/dim]")
 
 
-@lit.command("sota")
+@lit.command("report")
 @click.argument("review_id")
-def lit_sota(review_id: str):
-    """Show state-of-the-art summary from a review."""
+def lit_report(review_id: str):
+    """Show literature review report."""
     _, store = _setup()
     review = _find_review(store, review_id)
     if not review:
         return
 
-    summaries = store.query(SotaSummary, review_id=review.id)
-    if not summaries:
-        console.print("No SOTA summary yet. Run a review with save_sota_summary to generate one.")
+    reports = store.query(ReviewReport, review_id=review.id)
+    if not reports:
+        # Fall back to legacy SOTA summary
+        summaries = store.query(SotaSummary, review_id=review.id)
+        if summaries:
+            console.print("[dim](Legacy SOTA summary — use save_review_report for full reports)[/dim]\n")
+            console.print(summaries[0].summary)
+        else:
+            console.print("No report yet. Run a review to generate one.")
         return
 
-    latest = summaries[0]
-    text = f"[bold]State of the Art — {review.topic}[/bold]\n\n"
-    text += f"{latest.summary}\n\n"
+    report = reports[0]
+    sections = [
+        ("Landscape", report.landscape),
+        ("Methods", report.methods),
+        ("State of the Art", report.sota),
+        ("Resources", report.resources),
+        ("Gaps & Open Problems", report.gaps),
+        ("Trends", report.trends),
+        ("Conclusions", report.conclusions),
+    ]
 
-    text += "[bold]Best Methods:[/bold]\n"
-    for m in latest.best_methods:
-        text += f"  - {m}\n"
+    text = f"[bold]Literature Review: {review.topic}[/bold]\n\n"
+    for title, content in sections:
+        if content:
+            text += f"[bold]## {title}[/bold]\n\n{content}\n\n"
 
-    text += "\n[bold]Key Benchmarks:[/bold]\n"
-    for b in latest.key_benchmarks:
-        text += f"  - {b}\n"
-
-    text += "\n[bold]Open-Source Implementations:[/bold]\n"
-    for impl in latest.open_source_implementations:
-        text += f"  - {impl}\n"
-
-    text += "\n[bold]Open Problems:[/bold]\n"
-    for p in latest.open_problems:
-        text += f"  - {p}\n"
-
-    text += "\n[bold]Trends:[/bold]\n"
-    for t in latest.trends:
-        text += f"  - {t}\n"
-
-    console.print(Panel(text, title=f"SOTA — {_short_id(review.id)}"))
+    console.print(Panel(text, title=f"Report — {_short_id(review.id)}"))
 
 
 @lit.command("seed")

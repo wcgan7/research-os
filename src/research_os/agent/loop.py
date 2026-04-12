@@ -42,8 +42,9 @@ quickly process papers in bulk. For the most important papers, use save_assessme
 **Track resources**: When assessing papers, note any useful resources — code repos, datasets, \
 benchmarks, demos, blog posts. Use update_paper_resources to record these.
 
-**Produce a SOTA summary** before finishing: use save_sota_summary to capture what methods are best, \
-what benchmarks exist, what code is available, what problems remain open, and what trends are emerging.
+**Produce a review report** before finishing: use save_review_report to write a structured literature \
+review covering the landscape, methods comparison, SOTA results, available resources, gaps, trends, \
+and conclusions.
 
 Use save_note to record open questions, contradictions, assumptions, observations, or strategy \
 decisions as you work.

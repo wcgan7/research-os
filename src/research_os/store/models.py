@@ -120,18 +120,33 @@ class CapabilityRequest(BaseRecord):
 
 @dataclass
 class SotaSummary(BaseRecord):
-    """State-of-the-art summary produced at the end of a literature review."""
+    """Legacy — kept for DB compatibility."""
     __table_name__: ClassVar[str] = "sota_summaries"
+    review_id: str = ""
+    best_methods: list[str] = field(default_factory=list)
+    key_benchmarks: list[str] = field(default_factory=list)
+    open_source_implementations: list[str] = field(default_factory=list)
+    open_problems: list[str] = field(default_factory=list)
+    trends: list[str] = field(default_factory=list)
+    summary: str = ""
+    paper_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ReviewReport(BaseRecord):
+    """The final deliverable: a structured literature review report."""
+    __table_name__: ClassVar[str] = "review_reports"
 
     review_id: str = ""
-    # Structured SOTA findings
-    best_methods: list[str] = field(default_factory=list)  # ranked methods with metrics
-    key_benchmarks: list[str] = field(default_factory=list)  # datasets/benchmarks used in the field
-    open_source_implementations: list[str] = field(default_factory=list)  # available code repos
-    open_problems: list[str] = field(default_factory=list)  # unsolved challenges
-    trends: list[str] = field(default_factory=list)  # recent trends/directions
-    summary: str = ""  # prose summary of the state of the art
-    paper_ids: list[str] = field(default_factory=list)  # papers supporting this summary
+    # Sections of the report (each is prose markdown)
+    landscape: str = ""       # Overview/taxonomy of the field
+    methods: str = ""         # Detailed comparison of approaches
+    sota: str = ""            # Current state-of-the-art results with metrics
+    resources: str = ""       # Available code, datasets, benchmarks, demos
+    gaps: str = ""            # Open problems and limitations
+    trends: str = ""          # Emerging directions and future work
+    conclusions: str = ""     # Key takeaways and recommendations
+    paper_ids: list[str] = field(default_factory=list)  # papers supporting this report
 
 
 # Registry of all record types for schema init
@@ -144,4 +159,5 @@ ALL_RECORD_TYPES: list[type[BaseRecord]] = [
     ReviewNote,
     CapabilityRequest,
     SotaSummary,
+    ReviewReport,
 ]
