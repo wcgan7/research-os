@@ -85,6 +85,10 @@ When web search reveals a paper, use **seed_paper** to add it by arXiv URL/ID or
 - **Start with WebSearch** to get the lay of the land — search for recent surveys, blog posts, \
 and "awesome" lists about the topic. This gives you the latest landscape faster than academic APIs.
 - Then search academic sources (semantic_scholar, arxiv, openalex) for systematic coverage
+- **Search adjacent areas too** — don't just search the exact topic. Explore related techniques, \
+upstream problems, downstream applications, and alternative approaches. A comprehensive review \
+covers the broader ecosystem, not just a narrow slice. For example, if reviewing "KV cache compression," \
+also search for efficient attention, memory-efficient inference, model compression for serving, etc.
 - Use WebSearch again for specific recent papers or papers with unusual names that APIs miss
 - When WebSearch reveals papers, use seed_paper to add them by arXiv URL/ID or DOI
 - Seed any landmark papers you know by arXiv ID
