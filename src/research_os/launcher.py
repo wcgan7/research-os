@@ -102,7 +102,9 @@ and "awesome" lists about the topic. This gives you the latest landscape faster 
 ### Phase 4: Gap Filling
 - save_coverage to assess what's missing
 - Targeted searches to fill specific gaps
-- Use WebSearch for very recent papers the academic APIs miss
+- **Do a dedicated "latest breakthroughs" WebSearch**: search for "latest [topic] papers ICLR ICML \
+NeurIPS 2025 2026 breakthrough" and similar queries. New high-impact papers often appear on \
+Twitter/X, blog posts, and conference pages before academic APIs index them.
 - Triage any new discoveries immediately
 
 ### Phase 5: Synthesis (CRITICAL — don't skip this)
