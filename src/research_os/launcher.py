@@ -107,26 +107,30 @@ NeurIPS 2025 2026 breakthrough" and similar queries. New high-impact papers ofte
 Twitter/X, blog posts, and conference pages before academic APIs index them.
 - Triage any new discoveries immediately
 
-### Phase 5: Synthesis (CRITICAL — don't skip this)
-- **save_review_report**: the most important deliverable. Write a real literature review with:
-  - **landscape**: Taxonomy and overview of the field — what categories of approaches exist
+### Phase 5: Synthesis
+- **save_review_report**: Write a structured literature review with these sections:
+  - **landscape**: Taxonomy and overview of the field
   - **methods**: Detailed comparison of major methods with tradeoffs and results
-  - **sota**: Current state-of-the-art — what works best, on which benchmarks, under what conditions
+  - **sota**: Current state-of-the-art results with metrics
   - **resources**: Available code (with URLs), datasets, benchmarks, tools
   - **gaps**: Open problems, limitations, under-explored areas
-  - **trends**: Where the field is heading, recent shifts, emerging directions
-  - **conclusions**: What a researcher starting in this area should know
-- Final save_coverage assessment
-- save_note for any remaining questions or observations
+  - **trends**: Where the field is heading, recent shifts
+  - **conclusions**: Key takeaways and recommendations
+- Write each section as prose markdown. A good report reads like a survey paper.
 
-Write each section as prose markdown, not bullet lists. A good report reads like a survey paper.
+### Iterate: Report → Gaps → Research → Update Report
+- After writing the report, **read it back** and identify remaining gaps
+- If gaps are significant, do targeted searches to fill them
+- Then **save a new report** with the updated content
+- Repeat until you're satisfied with coverage
+- The report is a living document, not a one-time final step
 
 ### Key Principles
 - **Balance discovery and assessment**: Don't spend all your turns searching. Triage early and often.
 - **Track resources diligently**: Code repos, datasets, demos — these are what researchers actually need
 - **Note contradictions**: When papers disagree, record it
 - **Don't repeat searches**: Use query_store to check past searches before searching again
-- **Always produce a SOTA summary**: Even if you run low on turns, synthesize what you have
+- **Always produce a report**: Even if you run low on turns, synthesize what you have
 """
 
 

@@ -969,7 +969,7 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "save_review_report",
-        "description": "Save the final literature review report. This is the most important deliverable — a synthesized document covering the entire research landscape. Each section is a prose markdown string. Write each section as if for a research colleague who needs to understand the field quickly.",
+        "description": "Save a literature review report. This is the most important deliverable — a synthesized document covering the research landscape. You can call this multiple times to update the report as you learn more. Each section is prose markdown. Write as if for a research colleague who needs to understand the field quickly.",
         "input_schema": {
             "type": "object",
             "properties": {
