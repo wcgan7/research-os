@@ -15,6 +15,7 @@ from research_os.store.models import (
     ReviewReport,
     SearchRecord,
     SotaSummary,
+    _now,
 )
 from research_os.store.store import Store
 from research_os.types import ToolResult
@@ -742,23 +743,39 @@ def save_review_report(
     Each section is a prose markdown text covering a different aspect of the review.
     This is the most important deliverable — it should synthesize everything you learned
     into a coherent document that a researcher can read to understand the field.
+
+    Replaces any existing report for this review (one report per review).
     """
     store: Store = ctx["store"]
     review_id: str = ctx["review_id"]
 
-    report = ReviewReport(
-        review_id=review_id,
-        landscape=landscape,
-        methods=methods,
-        sota=sota,
-        resources=resources,
-        gaps=gaps,
-        trends=trends,
-        conclusions=conclusions,
-        paper_ids=paper_ids or [],
-    )
+    # Upsert: replace existing report if one exists
+    existing = store.query(ReviewReport, review_id=review_id)
+    if existing:
+        report = existing[0]
+        report.landscape = landscape
+        report.methods = methods
+        report.sota = sota
+        report.resources = resources
+        report.gaps = gaps
+        report.trends = trends
+        report.conclusions = conclusions
+        report.paper_ids = paper_ids or []
+        report.updated_at = _now()
+    else:
+        report = ReviewReport(
+            review_id=review_id,
+            landscape=landscape,
+            methods=methods,
+            sota=sota,
+            resources=resources,
+            gaps=gaps,
+            trends=trends,
+            conclusions=conclusions,
+            paper_ids=paper_ids or [],
+        )
     store.save(report)
-    return ToolResult(ok=True, data={"report_id": report.id})
+    return ToolResult(ok=True, data={"report_id": report.id, "updated": bool(existing)})
 
 
 def update_paper_resources(
@@ -834,8 +851,17 @@ def fetch_paper_text(
 
     from research_os.sources.paper_text import fetch_paper_text as _fetch
 
+    # Determine arXiv ID: direct source, or extract from URL
+    arxiv_id = None
+    if paper.source == "arxiv":
+        arxiv_id = paper.external_id
+    elif paper.url:
+        arxiv_match = re.search(r"arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5})", paper.url)
+        if arxiv_match:
+            arxiv_id = arxiv_match.group(1)
+
     text, source = _fetch(
-        arxiv_id=paper.external_id if paper.source == "arxiv" else None,
+        arxiv_id=arxiv_id,
         doi=paper.doi,
     )
 

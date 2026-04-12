@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import fcntl
 import time
+from pathlib import Path
 
 import httpx
 
@@ -11,6 +13,25 @@ from research_os.types import ToolResult
 
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
 FIELDS = "paperId,title,authors,year,abstract,url,citationCount,externalIds"
+
+# Cross-process rate limiting via file lock + timestamp
+_LOCK_PATH = Path.home() / ".research-os" / ".s2_rate_lock"
+_TS_PATH = Path.home() / ".research-os" / ".s2_last_request"
+
+
+def _cross_process_rate_limit(delay: float) -> None:
+    """Ensure minimum delay between S2 requests across all processes."""
+    _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_LOCK_PATH, "w") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            last = float(_TS_PATH.read_text().strip()) if _TS_PATH.exists() else 0
+        except (ValueError, OSError):
+            last = 0
+        elapsed = time.time() - last
+        if elapsed < delay:
+            time.sleep(delay - elapsed)
+        _TS_PATH.write_text(str(time.time()))
 
 
 class SemanticScholarClient:
@@ -23,13 +44,6 @@ class SemanticScholarClient:
         self.http = http
         self.cache = cache
         self.api_key = api_key
-        self._last_request: float = 0
-
-    def _rate_limit(self) -> None:
-        delay = 0.1 if self.api_key else 1.0
-        elapsed = time.time() - self._last_request
-        if elapsed < delay:
-            time.sleep(delay - elapsed)
 
     def _headers(self) -> dict:
         if self.api_key:
@@ -37,14 +51,15 @@ class SemanticScholarClient:
         return {}
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """Make a request with rate limiting and retry on 429."""
-        self._rate_limit()
+        """Make a request with cross-process rate limiting and retry on 429."""
+        delay = 0.1 if self.api_key else 1.0
+        _cross_process_rate_limit(delay)
         for attempt in range(5):
-            self._last_request = time.time()
             resp = self.http.request(method, url, headers=self._headers(), **kwargs)
             if resp.status_code == 429 and attempt < 4:
                 wait = 3 * (2 ** attempt)  # 3, 6, 12, 24 seconds
                 time.sleep(wait)
+                _cross_process_rate_limit(delay)
                 continue
             return resp
         return resp  # type: ignore[possibly-undefined]
@@ -53,6 +68,11 @@ class SemanticScholarClient:
         """Normalize an S2 paper dict to our standard shape."""
         authors = [a.get("name", "") for a in (raw.get("authors") or [])]
         ext_ids = raw.get("externalIds") or {}
+        # Prefer arXiv URL if available (helps fetch_paper_text)
+        url = raw.get("url")
+        arxiv_id = ext_ids.get("ArXiv")
+        if arxiv_id and not (url and "arxiv.org" in url):
+            url = f"https://arxiv.org/abs/{arxiv_id}"
         return {
             "source": "semantic_scholar",
             "external_id": raw.get("paperId", ""),
@@ -60,7 +80,7 @@ class SemanticScholarClient:
             "authors": authors,
             "year": raw.get("year"),
             "abstract": raw.get("abstract"),
-            "url": raw.get("url"),
+            "url": url,
             "doi": ext_ids.get("DOI"),
             "citation_count": raw.get("citationCount"),
         }

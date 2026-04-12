@@ -69,11 +69,13 @@ research-os tool call {review_id} query_store '{{"record_type": "papers", "filte
 
 ## Important: Your available tools
 
-You have these tools — use them directly, **never call ToolSearch**:
+You have these tools:
 - **Bash**: Run `research-os tool call ...` commands
 - **Read**, **Grep**, **Glob**: Read files
-- **WebSearch**: Search the web (described below)
-- **WebFetch**: Fetch a URL and read its content (described below)
+- **WebSearch**: Search the web (you may need to call ToolSearch once to load its schema)
+- **WebFetch**: Fetch a URL and read its content (you may need to call ToolSearch once to load its schema)
+
+Load WebSearch and WebFetch schemas together in one ToolSearch call at the start, then use them directly.
 
 ## Web Search (USE THIS — it's critical for completeness)
 
