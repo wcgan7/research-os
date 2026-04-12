@@ -206,6 +206,63 @@ def expand_references(ctx: ToolContext, paper_id: str, limit: int = 30) -> ToolR
     })
 
 
+def expand_citations(ctx: ToolContext, paper_id: str, limit: int = 30) -> ToolResult:
+    """Find papers that cite a given paper (forward citations)."""
+    store: Store = ctx["store"]
+    review_id: str = ctx["review_id"]
+    sources = ctx["sources"]
+
+    paper = store.get(Paper, paper_id)
+    if not paper:
+        return ToolResult(ok=False, error=f"Paper not found: {paper_id}")
+
+    s2 = sources.get("semantic_scholar")
+    if not s2:
+        return ToolResult(ok=False, error="Semantic Scholar client not available for citation expansion")
+
+    lookup_id = paper.external_id if paper.source == "semantic_scholar" else (paper.doi or paper.external_id)
+    result = s2.get_citations(lookup_id, limit=limit)
+    if not result.ok:
+        return result
+
+    new_papers = []
+    skipped = 0
+    for cit in result.data:
+        dup = store.find_duplicate(
+            review_id,
+            doi=cit.get("doi"),
+            external_id=cit.get("external_id"),
+            title=cit.get("title"),
+        )
+        if dup:
+            skipped += 1
+            continue
+
+        p = Paper(
+            review_id=review_id,
+            source=cit.get("source", "semantic_scholar"),
+            external_id=cit.get("external_id", ""),
+            title=cit.get("title", ""),
+            authors=cit.get("authors", []),
+            year=cit.get("year"),
+            abstract=cit.get("abstract"),
+            url=cit.get("url"),
+            doi=cit.get("doi"),
+            citation_count=cit.get("citation_count"),
+            status="discovered",
+        )
+        store.save(p)
+        new_papers.append({"id": p.id, "title": p.title})
+
+    return ToolResult(ok=True, data={
+        "source_paper": paper.title,
+        "citations_found": len(result.data),
+        "new_papers": len(new_papers),
+        "already_known": skipped,
+        "new_citations": new_papers[:15],
+    })
+
+
 def save_assessment(
     ctx: ToolContext,
     paper_id: str,
@@ -749,6 +806,61 @@ def update_paper_resources(
     })
 
 
+def fetch_paper_text(
+    ctx: ToolContext,
+    paper_id: str,
+) -> ToolResult:
+    """Fetch full text for a paper using its arXiv ID or DOI.
+
+    Tries arXiv (HTML → PDF → e-print) then DOI-based OA lookup.
+    Stores the result on the paper record.
+    """
+    store: Store = ctx["store"]
+
+    paper = store.get(Paper, paper_id)
+    if not paper:
+        return ToolResult(ok=False, error=f"Paper not found: {paper_id}")
+
+    # Return cached if already fetched
+    if paper.full_text:
+        return ToolResult(ok=True, data={
+            "paper_id": paper_id,
+            "title": paper.title,
+            "source": paper.full_text_source,
+            "chars": len(paper.full_text),
+            "text_preview": paper.full_text[:2000],
+            "cached": True,
+        })
+
+    from research_os.sources.paper_text import fetch_paper_text as _fetch
+
+    text, source = _fetch(
+        arxiv_id=paper.external_id if paper.source == "arxiv" else None,
+        doi=paper.doi,
+    )
+
+    if not text:
+        return ToolResult(ok=True, data={
+            "paper_id": paper_id,
+            "title": paper.title,
+            "text": None,
+            "note": "Could not fetch full text. Try WebFetch on the paper URL as fallback.",
+            "url": paper.url,
+        })
+
+    paper.full_text = text
+    paper.full_text_source = source
+    store.save(paper)
+
+    return ToolResult(ok=True, data={
+        "paper_id": paper_id,
+        "title": paper.title,
+        "source": source,
+        "chars": len(text),
+        "text_preview": text[:2000],
+    })
+
+
 # ── Tool schemas for Claude tool_use ─────────────────────────────────
 
 TOOL_DEFINITIONS: list[dict] = [
@@ -788,6 +900,18 @@ TOOL_DEFINITIONS: list[dict] = [
             "properties": {
                 "paper_id": {"type": "string", "description": "Internal paper record ID"},
                 "limit": {"type": "integer", "description": "Max references to fetch. Default: 30"},
+            },
+            "required": ["paper_id"],
+        },
+    },
+    {
+        "name": "expand_citations",
+        "description": "Find papers that cite a given paper (forward citations). Useful for finding newer work that builds on a key paper.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "string", "description": "Internal paper record ID"},
+                "limit": {"type": "integer", "description": "Max citations to fetch. Default: 30"},
             },
             "required": ["paper_id"],
         },
@@ -1020,6 +1144,17 @@ TOOL_DEFINITIONS: list[dict] = [
             "required": ["paper_id", "resources"],
         },
     },
+    {
+        "name": "fetch_paper_text",
+        "description": "Fetch full text for a paper using its arXiv ID or DOI. Tries arXiv HTML, PDF, and e-print sources, then DOI-based open-access lookup. Returns a preview of the text. Use this to read paper content beyond the abstract.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "string", "description": "Internal paper record ID"},
+            },
+            "required": ["paper_id"],
+        },
+    },
 ]
 
 
@@ -1029,6 +1164,7 @@ TOOL_FUNCTIONS: dict[str, callable] = {
     "search_papers": search_papers,
     "get_paper_details": get_paper_details,
     "expand_references": expand_references,
+    "expand_citations": expand_citations,
     "save_assessment": save_assessment,
     "update_paper_status": update_paper_status,
     "save_coverage": save_coverage,
@@ -1042,4 +1178,5 @@ TOOL_FUNCTIONS: dict[str, callable] = {
     "save_sota_summary": save_sota_summary,  # backward compat
     "save_review_report": save_review_report,
     "update_paper_resources": update_paper_resources,
+    "fetch_paper_text": fetch_paper_text,
 }

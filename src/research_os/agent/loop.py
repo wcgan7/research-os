@@ -33,8 +33,8 @@ You decide the strategy: what to search, which sources to use, when to go deeper
 references, when to step back and assess coverage, and when you're done.
 
 Start by searching for key terms related to the topic. Branch out as you discover subtopics \
-and related work. Use expand_references on highly relevant papers to find more related work. \
-Periodically assess coverage to identify gaps.
+and related work. Use expand_references on highly relevant papers to find related work, and \
+expand_citations to find newer papers that build on them. Periodically assess coverage to identify gaps.
 
 **Triage ALL discovered papers** — don't leave them in "discovered" status. Use batch_triage to \
 quickly process papers in bulk. For the most important papers, use save_assessment for detailed notes.
@@ -42,20 +42,23 @@ quickly process papers in bulk. For the most important papers, use save_assessme
 **Track resources**: When assessing papers, note any useful resources — code repos, datasets, \
 benchmarks, demos, blog posts. Use update_paper_resources to record these.
 
-**Produce a review report** before finishing: use save_review_report to write a structured literature \
-review covering the landscape, methods comparison, SOTA results, available resources, gaps, trends, \
-and conclusions.
+**Produce a review report** — but don't stop there. Use save_review_report to write a structured \
+literature review covering the landscape, methods comparison, SOTA results, available resources, \
+gaps, trends, and conclusions. Then critically evaluate it: which sections are thin? What claims \
+rest on only one paper? What gaps did you mention but never search for? Run save_coverage AFTER \
+writing the report — it will be more honest. If actionable gaps remain, go back to targeted \
+discovery, triage/assess the new papers, and rewrite the report. Stop only when searching for \
+remaining gaps yields nothing new.
 
 Use save_note to record open questions, contradictions, assumptions, observations, or strategy \
 decisions as you work.
-
-When you feel you have good coverage, produce a SOTA summary, final coverage assessment, and stop.
 
 ## Tips
 
 - Search multiple sources for the same concept — they index different papers
 - Use your native WebSearch tool for specific paper names or to find papers that academic APIs miss
-- When a paper looks highly relevant, expand its references
+- Never guess arXiv IDs from memory — they are frequently wrong. Use URLs from search results or search by title
+- When a paper looks highly relevant, expand its references and use WebFetch to read its full content
 - Use batch_triage to quickly process many papers instead of individual assessments
 - Track resources (code, datasets, demos, blogs) — these are critical for downstream work
 - Keep notes as you go — especially contradictions and surprising findings

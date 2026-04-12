@@ -56,6 +56,9 @@ class Paper(BaseRecord):
     # Generic resources: code repos, datasets, demos, blog posts, etc.
     # Each entry is a JSON string like {"type": "code", "url": "...", "description": "..."}
     resources: list[str] = field(default_factory=list)
+    # Full text content (extracted from PDF/HTML/LaTeX)
+    full_text: str | None = None
+    full_text_source: str | None = None  # arxiv_html | arxiv_pdf | arxiv_eprint | crossref_pdf | etc.
 
 
 @dataclass

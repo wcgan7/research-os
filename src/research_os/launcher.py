@@ -52,7 +52,8 @@ research-os tool call {review_id} query_store '{{"record_type": "papers", "filte
 
 - **search_papers**: Search academic APIs. Args: `{{"query": "...", "source": "semantic_scholar|arxiv|openalex", "limit": 20}}`
 - **get_paper_details**: Full metadata. Args: `{{"paper_id": "..."}}`
-- **expand_references**: Cited-by expansion. Args: `{{"paper_id": "...", "limit": 30}}`
+- **expand_references**: Papers cited by a paper (backward). Args: `{{"paper_id": "...", "limit": 30}}`
+- **expand_citations**: Papers that cite a paper (forward — finds newer work). Args: `{{"paper_id": "...", "limit": 30}}`
 - **save_assessment**: Deep paper assessment. Args: `{{"paper_id": "...", "relevance": "essential|relevant|tangential|not_relevant", "rationale": "...", "key_claims": [...], "methodology_notes": "...", "connections": [...]}}`
 - **batch_triage**: Rapid bulk triage. Args: `{{"decisions": [{{"paper_id": "...", "relevance": "relevant|not_relevant|uncertain|deferred", "reason": "...", "key_claims": [...]}}]}}`
 - **update_paper_status**: Change status. Args: `{{"paper_id": "...", "status": "discovered|seed|reviewed|relevant|not_relevant|uncertain|deferred"}}`
@@ -63,6 +64,7 @@ research-os tool call {review_id} query_store '{{"record_type": "papers", "filte
 - **seed_paper**: Add paper by URL/ID. Args: `{{"url_or_id": "..."}}`
 - **query_store**: Read records. Args: `{{"record_type": "papers|assessments|searches|coverage|notes|report", "filters": {{}}}}`
 - **export_bibtex**: Export citations. Args: `{{"paper_ids": [...]}}`
+- **fetch_paper_text**: Fetch full text for a paper (arXiv HTML/PDF/e-print or DOI-based OA). Args: `{{"paper_id": "..."}}`
 - **execute_code**: Run code. Args: `{{"code": "...", "language": "python|bash"}}`
 
 ## Important: Your available tools
@@ -71,6 +73,7 @@ You have these tools — use them directly, **never call ToolSearch**:
 - **Bash**: Run `research-os tool call ...` commands
 - **Read**, **Grep**, **Glob**: Read files
 - **WebSearch**: Search the web (described below)
+- **WebFetch**: Fetch a URL and read its content (described below)
 
 ## Web Search (USE THIS — it's critical for completeness)
 
@@ -84,7 +87,15 @@ You have a native **WebSearch** tool — use it directly (not through search_pap
 - "latest [topic] papers 2025 2026" queries to catch very recent work
 - Specific paper names you've heard about but haven't found in academic APIs
 
-When web search reveals a paper, use **seed_paper** to add it by arXiv URL/ID or DOI.
+When web search reveals a paper, use **seed_paper** to add it by the URL or DOI from the search results. \
+**Never guess arXiv IDs from memory** — they are frequently wrong and will silently fetch unrelated papers. \
+If you don't have a URL, search by title instead.
+
+## Reading Paper Content
+
+Prefer reading full paper content over relying on abstracts alone. Use **fetch_paper_text** to extract \
+clean full text from papers — it handles arXiv HTML/PDF/LaTeX and DOI-based open-access lookup \
+automatically. For papers where fetch_paper_text fails, fall back to **WebFetch** on the paper URL.
 
 ## Research Strategy
 
@@ -119,7 +130,7 @@ NeurIPS 2025 2026 breakthrough" and similar queries. New high-impact papers ofte
 Twitter/X, blog posts, and conference pages before academic APIs index them.
 - Triage any new discoveries immediately
 
-### Phase 5: Synthesis
+### Phase 5: Synthesis (this is NOT the final step)
 - **save_review_report**: Write a structured literature review with these sections:
   - **landscape**: Taxonomy and overview of the field
   - **methods**: Detailed comparison of major methods with tradeoffs and results
@@ -130,20 +141,37 @@ Twitter/X, blog posts, and conference pages before academic APIs index them.
   - **conclusions**: Key takeaways and recommendations
 - Write each section as prose markdown. A good report reads like a survey paper.
 
-### Iterate: Report → Gaps → Research → Update Report
-- After writing the report, **read it back** and identify remaining gaps
-- If gaps are significant, do targeted searches to fill them
-- Then **save a new report** with the updated content
-- Repeat until you're satisfied with coverage
-- The report is a living document, not a one-time final step
+### Phase 6: Evaluate and Iterate
+Writing the report is a diagnostic act — it reveals what you actually know vs. what you assumed. \
+After writing the report, you MUST do the following:
+
+1. **Critically evaluate your own report**: Which sections felt thin? Where did you rely on a single \
+paper? What claims did you make without strong evidence? What areas did you mention as gaps but \
+never actually searched for?
+2. **Run save_coverage**: Do this AFTER the report, not before. Your coverage assessment will be much \
+more honest now that you've tried to write coherently about each area.
+3. **Decide whether to continue or stop**:
+   - **Continue if**: the coverage assessment identifies gaps you haven't searched for yet, or sections \
+of your report are supported by only 1-2 papers, or you mentioned a technique/paper by name but don't \
+have it in the database.
+   - **Stop if**: you've already searched for the remaining gaps and found nothing new, AND no section \
+of your report relies on fewer than 2-3 assessed papers. This is convergence — you've extracted what \
+the available sources can give you.
+4. **If continuing**: Fill the gaps however you see fit — search, triage, assess, expand references. \
+Then **rewrite the report** — don't create a second report, replace the previous one with an improved \
+version incorporating the new material.
+5. **Repeat** this evaluate-and-iterate cycle. Two to three iterations is typical. Diminishing returns \
+kick in after that.
 
 ### Key Principles
-- **Balance discovery and assessment**: Don't spend all your turns searching. Triage early and often.
+- **The report is a diagnostic tool, not just an output**: Writing it tells you what you're missing. \
+Never treat it as the final step.
+- **Balance discovery and assessment**: Don't spend all time searching. Triage early and often.
 - **Track resources diligently**: After assessing essential papers, use update_paper_resources and \
 WebSearch to find their code, datasets, demos. Resources are what researchers need most.
 - **Note contradictions and surprises**: Use save_note when papers disagree or findings are unexpected
 - **Don't repeat searches**: Call query_store to check past searches BEFORE every new search_papers call
-- **Always produce a report**: Even if you run low on turns, synthesize what you have
+- **Always produce a report**: Synthesize what you have before stopping
 """
 
 
@@ -260,12 +288,12 @@ def launch_review(
         "--append-system-prompt-file", str(system_file),
         "--output-format", "stream-json",
         "--verbose",
-        "--allowed-tools", "Bash", "Read", "Grep", "Glob", "WebSearch",
+        "--allowed-tools", "Bash", "Read", "Grep", "Glob", "WebSearch", "WebFetch",
     ]
     if model:
         cmd.extend(["--model", model])
-    cmd.extend(["--max-turns", str(max_turns or 50)])
-    cmd.extend(["--max-budget-usd", "10.0"])
+    if max_turns:
+        cmd.extend(["--max-turns", str(max_turns)])
 
     # Ensure research-os is available in PATH
     venv_bin = Path(sys.executable).parent

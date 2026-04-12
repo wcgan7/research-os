@@ -100,6 +100,27 @@ class SemanticScholarClient:
             )
         return ToolResult(ok=True, data=self._normalize(resp.json()))
 
+    def get_citations(self, paper_id: str, limit: int = 50) -> ToolResult:
+        """Get papers that cite this paper (forward citations)."""
+        resp = self._request(
+            "GET",
+            f"{BASE_URL}/paper/{paper_id}/citations",
+            params={"limit": limit, "fields": FIELDS},
+        )
+        if resp.status_code != 200:
+            return ToolResult(
+                ok=False,
+                error=f"S2 get_citations failed ({resp.status_code}): {resp.text[:200]}",
+                retryable=resp.status_code in (429, 500, 502, 503),
+            )
+        raw_cits = resp.json().get("data") or []
+        results = []
+        for cit in raw_cits:
+            citing = cit.get("citingPaper")
+            if citing and citing.get("title"):
+                results.append(self._normalize(citing))
+        return ToolResult(ok=True, data=results)
+
     def get_references(self, paper_id: str, limit: int = 50) -> ToolResult:
         resp = self._request(
             "GET",
