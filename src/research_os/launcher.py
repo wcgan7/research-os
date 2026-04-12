@@ -50,15 +50,18 @@ research-os tool summary {review_id}
 
 ## Available tools
 
-- **search_papers**: Search for papers. Args: `{{"query": "...", "source": "semantic_scholar|arxiv|openalex", "limit": 20}}`
+- **search_papers**: Search for papers. Args: `{{"query": "...", "source": "semantic_scholar|arxiv|openalex|web_search", "limit": 20}}`
 - **get_paper_details**: Get full metadata. Args: `{{"paper_id": "..."}}`
 - **expand_references**: Get papers cited by a paper. Args: `{{"paper_id": "...", "limit": 30}}`
-- **save_assessment**: Assess a paper. Args: `{{"paper_id": "...", "relevance_score": 1-5, "rationale": "...", "key_claims": [...], "methodology_notes": "...", "connections": [...]}}`
+- **save_assessment**: Assess a paper in depth. Args: `{{"paper_id": "...", "relevance_score": 1-5, "rationale": "...", "key_claims": [...], "methodology_notes": "...", "connections": [...]}}`
+- **batch_triage**: Quickly triage multiple papers at once. Args: `{{"decisions": [{{"paper_id": "...", "relevance": "relevant|not_relevant|uncertain|deferred", "reason": "...", "key_claims": [...]}}]}}`
 - **update_paper_status**: Change status. Args: `{{"paper_id": "...", "status": "discovered|seed|reviewed|relevant|not_relevant|uncertain|deferred", "rationale": "..."}}`
+- **update_paper_metadata**: Track code/benchmarks. Args: `{{"paper_id": "...", "code_url": "...", "datasets": [...]}}`
 - **save_coverage**: Record coverage assessment. Args: `{{"areas_covered": [...], "gaps": [...], "confidence": 0.0-1.0, "next_actions": [...], "summary": "..."}}`
+- **save_sota_summary**: Record state-of-the-art summary. Args: `{{"best_methods": [...], "key_benchmarks": [...], "open_source_implementations": [...], "open_problems": [...], "trends": [...], "summary": "...", "paper_ids": [...]}}`
 - **save_note**: Record a research note. Args: `{{"kind": "question|gap|contradiction|baseline_candidate|tool_wish|strategy_note|observation|assumption|next_step", "content": "...", "paper_ids": [...], "priority": N}}`
 - **request_capability**: Request a missing tool. Args: `{{"name": "...", "rationale": "...", "example_usage": "..."}}`
-- **query_store**: Query records. Args: `{{"record_type": "papers|assessments|searches|coverage|notes|capability_requests", "filters": {{}}}}`. Supports a special "keyword" filter for case-insensitive title/abstract search, e.g. `{{"record_type": "papers", "filters": {{"keyword": "quantization"}}}}`
+- **query_store**: Query records. Args: `{{"record_type": "papers|assessments|searches|coverage|notes|capability_requests|sota", "filters": {{}}}}`. Supports a special "keyword" filter for case-insensitive title/abstract search, e.g. `{{"record_type": "papers", "filters": {{"keyword": "quantization"}}}}`
 - **seed_paper**: Add a seed paper. Args: `{{"url_or_id": "..."}}`
 - **export_bibtex**: Export BibTeX. Args: `{{"paper_ids": [...]}}`
 - **execute_code**: Run Python/bash code. Args: `{{"code": "...", "language": "python|bash"}}`
@@ -67,18 +70,26 @@ research-os tool summary {review_id}
 
 You decide the research strategy. Here are some guidelines:
 
-1. **Start broad**: Search key terms across multiple sources (semantic_scholar, arxiv, openalex). They index different papers.
-2. **Assess selectively**: Don't assess every paper. Focus on the most promising ones based on title and abstract.
-3. **Go deep on good papers**: When a paper scores 4-5, expand its references to find related work.
-4. **Track your process**: Use save_note frequently — after each batch of assessments, record observations, \
-contradictions, emerging taxonomy, and strategy decisions. Notes are the most valuable output.
-5. **Check coverage periodically**: After every ~10 assessments, do a save_coverage to identify gaps and plan next steps.
-6. **Don't repeat yourself**: Use query_store to check what searches you've already done before searching again.
-7. **Be honest about uncertainty**: Mark papers as "uncertain" when you can't tell from title+abstract alone.
-8. **Budget your turns**: You have a limited number of turns. Prioritize depth on key papers over breadth. \
-Make sure to produce a final coverage assessment before you finish.
+1. **Start broad, then use web search for gaps**: Search key terms across academic sources (semantic_scholar, \
+arxiv, openalex), then use web_search to find papers the academic APIs miss — especially very recent papers, \
+workshop papers, blog posts about new methods, or papers with unusual names.
+2. **Triage aggressively**: Use batch_triage to quickly process all discovered papers. Don't leave papers \
+in "discovered" status — triage them as relevant, not_relevant, uncertain, or deferred. Aim to triage ALL \
+discovered papers, not just a few. This is critical for review completeness.
+3. **Go deep on good papers**: When a paper scores 4-5, expand its references and use save_assessment for detailed notes.
+4. **Track code and benchmarks**: When assessing papers, check if they mention open-source code (GitHub URLs) \
+or benchmark datasets. Use update_paper_metadata to record these. This is essential for downstream work.
+5. **Track your process**: Use save_note frequently — after each batch of assessments, record observations, \
+contradictions, emerging taxonomy, and strategy decisions.
+6. **Check coverage periodically**: After every ~10-15 assessments, do a save_coverage to identify gaps.
+7. **Don't repeat yourself**: Use query_store to check what searches you've already done.
+8. **Produce a SOTA summary**: Before finishing, use save_sota_summary to capture: what methods are best, \
+what benchmarks exist, what open-source code is available, what problems remain open, and what trends are emerging. \
+This is the most important deliverable — a reader should understand the state of the art from your summary.
+9. **Budget your turns**: You have a limited number of turns. Prioritize: broad search → triage all → \
+deep assess top papers → track code/benchmarks → SOTA summary → final coverage.
 
-When you feel you have good coverage of the topic, produce a final coverage assessment and stop.
+When you feel you have good coverage, produce a SOTA summary, a final coverage assessment, and stop.
 """
 
 
@@ -143,6 +154,7 @@ def launch_review(
         from research_os.sources.arxiv import ArxivClient
         from research_os.sources.semantic_scholar import SemanticScholarClient
         from research_os.sources.openalex import OpenAlexClient
+        from research_os.sources.web_search import WebSearchClient
 
         http = httpx.Client(timeout=30.0, follow_redirects=True)
         cache = Cache(cfg.cache_dir)
@@ -150,6 +162,7 @@ def launch_review(
             "semantic_scholar": SemanticScholarClient(http, cache, api_key=cfg.s2_api_key),
             "arxiv": ArxivClient(http, cache),
             "openalex": OpenAlexClient(http, cache),
+            "web_search": WebSearchClient(),
         }
         ctx = {"store": store, "review_id": review.id, "sources": sources}
         seeded = []

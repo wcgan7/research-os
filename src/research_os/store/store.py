@@ -47,8 +47,11 @@ class Store:
     def _deserialize(cls: type[T], row: sqlite3.Row) -> T:
         kwargs = dict(row)
         for name in _list_fields_for(cls):
-            if isinstance(kwargs.get(name), str):
-                kwargs[name] = json.loads(kwargs[name])
+            val = kwargs.get(name)
+            if isinstance(val, str):
+                kwargs[name] = json.loads(val)
+            elif val is None:
+                kwargs[name] = []
         return cls(**kwargs)
 
     # ── CRUD ─────────────────────────────────────────────────────

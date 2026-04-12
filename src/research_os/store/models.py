@@ -42,7 +42,7 @@ class Paper(BaseRecord):
     __table_name__: ClassVar[str] = "papers"
 
     review_id: str = ""
-    source: str = ""  # semantic_scholar | arxiv | openalex | manual
+    source: str = ""  # semantic_scholar | arxiv | openalex | web_search | manual
     external_id: str = ""
     title: str = ""
     authors: list[str] = field(default_factory=list)
@@ -53,6 +53,8 @@ class Paper(BaseRecord):
     citation_count: int | None = None
     # discovered | seed | reviewed | relevant | not_relevant | uncertain | deferred
     status: str = "discovered"
+    code_url: str | None = None  # URL to open-source implementation
+    datasets: list[str] = field(default_factory=list)  # benchmark datasets used
 
 
 @dataclass
@@ -115,6 +117,22 @@ class CapabilityRequest(BaseRecord):
     example_usage: str = ""
 
 
+@dataclass
+class SotaSummary(BaseRecord):
+    """State-of-the-art summary produced at the end of a literature review."""
+    __table_name__: ClassVar[str] = "sota_summaries"
+
+    review_id: str = ""
+    # Structured SOTA findings
+    best_methods: list[str] = field(default_factory=list)  # ranked methods with metrics
+    key_benchmarks: list[str] = field(default_factory=list)  # datasets/benchmarks used in the field
+    open_source_implementations: list[str] = field(default_factory=list)  # available code repos
+    open_problems: list[str] = field(default_factory=list)  # unsolved challenges
+    trends: list[str] = field(default_factory=list)  # recent trends/directions
+    summary: str = ""  # prose summary of the state of the art
+    paper_ids: list[str] = field(default_factory=list)  # papers supporting this summary
+
+
 # Registry of all record types for schema init
 ALL_RECORD_TYPES: list[type[BaseRecord]] = [
     LiteratureReview,
@@ -124,4 +142,5 @@ ALL_RECORD_TYPES: list[type[BaseRecord]] = [
     CoverageAssessment,
     ReviewNote,
     CapabilityRequest,
+    SotaSummary,
 ]

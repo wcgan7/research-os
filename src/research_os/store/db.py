@@ -70,15 +70,27 @@ def _resolve_fields(cls) -> list[tuple[str, type]]:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create tables for all record types if they don't exist."""
+    """Create tables for all record types if they don't exist.
+
+    Also adds any missing columns to existing tables (forward migration).
+    """
     for cls in ALL_RECORD_TYPES:
         table = cls.__table_name__
         columns = []
-        for name, resolved_type in _resolve_fields(cls):
+        field_defs = _resolve_fields(cls)
+        for name, resolved_type in field_defs:
             if name == "id":
                 columns.append("id TEXT PRIMARY KEY")
             else:
                 columns.append(f"{name} {_sql_type(resolved_type)}")
         ddl = f"CREATE TABLE IF NOT EXISTS {table} ({', '.join(columns)})"
         conn.execute(ddl)
+
+        # Add any missing columns to existing tables
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, resolved_type in field_defs:
+            if name not in existing:
+                col_type = _sql_type(resolved_type)
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {col_type}")
+
     conn.commit()

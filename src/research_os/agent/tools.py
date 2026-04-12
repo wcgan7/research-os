@@ -13,6 +13,7 @@ from research_os.store.models import (
     Paper,
     ReviewNote,
     SearchRecord,
+    SotaSummary,
 )
 from research_os.store.store import Store
 from research_os.types import ToolResult
@@ -35,7 +36,10 @@ def search_papers(ctx: ToolContext, query: str, source: str = "semantic_scholar"
     if not client:
         return ToolResult(ok=False, error=f"Unknown source: {source}. Available: {list(sources.keys())}")
 
-    result = client.search(query, limit=limit) if source != "arxiv" else client.search(query, max_results=limit)
+    if source in ("arxiv", "web_search"):
+        result = client.search(query, max_results=limit)
+    else:
+        result = client.search(query, limit=limit)
     if not result.ok:
         return result
 
@@ -354,6 +358,7 @@ def query_store(ctx: ToolContext, record_type: str, filters: dict | None = None)
         "coverage": CoverageAssessment,
         "notes": ReviewNote,
         "capability_requests": CapabilityRequest,
+        "sota": SotaSummary,
     }
 
     cls = type_map.get(record_type)
@@ -570,6 +575,125 @@ def execute_code(ctx: ToolContext, code: str, language: str = "python") -> ToolR
         return ToolResult(ok=False, error=f"Execution error: {e}")
 
 
+def batch_triage(
+    ctx: ToolContext,
+    decisions: list[dict],
+) -> ToolResult:
+    """Triage multiple papers at once with lightweight decisions.
+
+    Each decision: {"paper_id": "...", "relevance": "relevant|not_relevant|uncertain|deferred", "reason": "..."}
+    For relevant papers, optionally include "key_claims": [...] for quick notes.
+    """
+    store: Store = ctx["store"]
+    review_id: str = ctx["review_id"]
+
+    results = []
+    errors = []
+    valid_statuses = {"relevant", "not_relevant", "uncertain", "deferred"}
+
+    for d in decisions:
+        paper_id = d.get("paper_id", "")
+        relevance = d.get("relevance", "")
+        reason = d.get("reason", "")
+
+        if relevance not in valid_statuses:
+            errors.append(f"{paper_id}: invalid relevance '{relevance}'")
+            continue
+
+        paper = store.get(Paper, paper_id)
+        if not paper:
+            errors.append(f"{paper_id}: not found")
+            continue
+
+        # Create a lightweight assessment
+        score_map = {"relevant": 4, "not_relevant": 1, "uncertain": 3, "deferred": 2}
+        assessment = Assessment(
+            review_id=review_id,
+            paper_id=paper_id,
+            relevance_score=score_map[relevance],
+            rationale=reason,
+            key_claims=d.get("key_claims", []),
+        )
+        store.save(assessment)
+
+        # Update paper status
+        status_map = {"relevant": "relevant", "not_relevant": "not_relevant", "uncertain": "uncertain", "deferred": "deferred"}
+        paper.status = status_map[relevance]
+        store.save(paper)
+
+        results.append({"paper_id": paper_id, "title": paper.title[:60], "status": paper.status})
+
+    return ToolResult(ok=True, data={
+        "triaged": len(results),
+        "errors": len(errors),
+        "results": results,
+        "error_details": errors if errors else None,
+    })
+
+
+def save_sota_summary(
+    ctx: ToolContext,
+    best_methods: list[str],
+    key_benchmarks: list[str],
+    open_source_implementations: list[str],
+    open_problems: list[str],
+    trends: list[str],
+    summary: str,
+    paper_ids: list[str] | None = None,
+) -> ToolResult:
+    """Record a state-of-the-art summary for the review.
+
+    This captures: what methods are best, what benchmarks exist, what code is available,
+    what problems remain open, and what trends are emerging.
+    """
+    store: Store = ctx["store"]
+    review_id: str = ctx["review_id"]
+
+    sota = SotaSummary(
+        review_id=review_id,
+        best_methods=best_methods,
+        key_benchmarks=key_benchmarks,
+        open_source_implementations=open_source_implementations,
+        open_problems=open_problems,
+        trends=trends,
+        summary=summary,
+        paper_ids=paper_ids or [],
+    )
+    store.save(sota)
+    return ToolResult(ok=True, data={"sota_id": sota.id})
+
+
+def update_paper_metadata(
+    ctx: ToolContext,
+    paper_id: str,
+    code_url: str | None = None,
+    datasets: list[str] | None = None,
+) -> ToolResult:
+    """Update a paper's code URL and/or benchmark datasets.
+
+    Use this when you discover that a paper has an open-source implementation
+    or uses specific benchmark datasets.
+    """
+    store: Store = ctx["store"]
+
+    paper = store.get(Paper, paper_id)
+    if not paper:
+        return ToolResult(ok=False, error=f"Paper not found: {paper_id}")
+
+    if code_url is not None:
+        paper.code_url = code_url
+    if datasets is not None:
+        paper.datasets = datasets
+    store.save(paper)
+
+    return ToolResult(ok=True, data={
+        "paper_id": paper_id,
+        "title": paper.title,
+        "code_url": paper.code_url,
+        "datasets": paper.datasets,
+    })
+
+
 # ── Tool schemas for Claude tool_use ─────────────────────────────────
 
 TOOL_DEFINITIONS: list[dict] = [
@@ -582,8 +706,8 @@ TOOL_DEFINITIONS: list[dict] = [
                 "query": {"type": "string", "description": "Search query"},
                 "source": {
                     "type": "string",
-                    "enum": ["semantic_scholar", "arxiv", "openalex"],
-                    "description": "Which source to search. Default: semantic_scholar",
+                    "enum": ["semantic_scholar", "arxiv", "openalex", "web_search"],
+                    "description": "Which source to search. Default: semantic_scholar. Use web_search to find papers that academic APIs miss.",
                 },
                 "limit": {"type": "integer", "description": "Max results to return. Default: 20"},
             },
@@ -709,7 +833,7 @@ TOOL_DEFINITIONS: list[dict] = [
             "properties": {
                 "record_type": {
                     "type": "string",
-                    "enum": ["papers", "assessments", "searches", "coverage", "notes", "capability_requests"],
+                    "enum": ["papers", "assessments", "searches", "coverage", "notes", "capability_requests", "sota"],
                 },
                 "filters": {
                     "type": "object",
@@ -760,6 +884,95 @@ TOOL_DEFINITIONS: list[dict] = [
             "required": ["code"],
         },
     },
+    {
+        "name": "batch_triage",
+        "description": "Quickly triage multiple papers at once. Much faster than individual save_assessment calls. Use this to rapidly process discovered papers — mark them as relevant, not_relevant, uncertain, or deferred based on title and abstract.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "decisions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "paper_id": {"type": "string"},
+                            "relevance": {
+                                "type": "string",
+                                "enum": ["relevant", "not_relevant", "uncertain", "deferred"],
+                            },
+                            "reason": {"type": "string", "description": "Brief reason for the decision"},
+                            "key_claims": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Key claims (optional, for relevant papers)",
+                            },
+                        },
+                        "required": ["paper_id", "relevance", "reason"],
+                    },
+                    "description": "List of triage decisions",
+                },
+            },
+            "required": ["decisions"],
+        },
+    },
+    {
+        "name": "save_sota_summary",
+        "description": "Record a state-of-the-art summary. Call this as a final step to capture: best methods with metrics, key benchmarks/datasets, available open-source implementations, open problems, and trends. This is the most important output of a complete literature review.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "best_methods": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Ranked list of best methods with key metrics (e.g., 'MethodX: 2.1x compression with <1% accuracy loss on LLaMA-7B')",
+                },
+                "key_benchmarks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Important benchmark datasets and evaluation protocols used in the field",
+                },
+                "open_source_implementations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Available open-source code repos (e.g., 'github.com/org/repo - implements MethodX')",
+                },
+                "open_problems": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Important unsolved problems or limitations",
+                },
+                "trends": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Recent trends and emerging directions",
+                },
+                "summary": {"type": "string", "description": "Prose summary of the state of the art"},
+                "paper_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Paper IDs that support this summary",
+                },
+            },
+            "required": ["best_methods", "key_benchmarks", "open_source_implementations", "open_problems", "trends", "summary"],
+        },
+    },
+    {
+        "name": "update_paper_metadata",
+        "description": "Update a paper's code URL and/or benchmark datasets. Use when you discover a paper has an open-source implementation or uses specific benchmarks.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "paper_id": {"type": "string", "description": "Internal paper record ID"},
+                "code_url": {"type": "string", "description": "URL to open-source implementation (GitHub, etc.)"},
+                "datasets": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Benchmark datasets used by this paper",
+                },
+            },
+            "required": ["paper_id"],
+        },
+    },
 ]
 
 
@@ -778,4 +991,7 @@ TOOL_FUNCTIONS: dict[str, callable] = {
     "seed_paper": seed_paper,
     "export_bibtex": export_bibtex,
     "execute_code": execute_code,
+    "batch_triage": batch_triage,
+    "save_sota_summary": save_sota_summary,
+    "update_paper_metadata": update_paper_metadata,
 }

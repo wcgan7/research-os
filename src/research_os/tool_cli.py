@@ -18,6 +18,7 @@ from research_os.sources.arxiv import ArxivClient
 from research_os.sources.cache import Cache
 from research_os.sources.openalex import OpenAlexClient
 from research_os.sources.semantic_scholar import SemanticScholarClient
+from research_os.sources.web_search import WebSearchClient
 from research_os.store.db import get_connection, init_schema
 from research_os.store.store import Store
 
@@ -35,6 +36,7 @@ def _setup(review_id: str) -> tuple[dict, str]:
         "semantic_scholar": SemanticScholarClient(http, cache, api_key=cfg.s2_api_key),
         "arxiv": ArxivClient(http, cache),
         "openalex": OpenAlexClient(http, cache),
+        "web_search": WebSearchClient(),
     }
     ctx = {"store": store, "review_id": review_id, "sources": sources}
     return ctx, review_id
@@ -113,6 +115,7 @@ def review_summary(review_id: str):
         ReviewNote,
         SearchRecord,
         LiteratureReview,
+        SotaSummary,
     )
 
     review = store.get(LiteratureReview, review_id)
@@ -132,10 +135,15 @@ def review_summary(review_id: str):
     searches = store.query(SearchRecord, review_id=review_id)
     notes = store.query(ReviewNote, review_id=review_id)
     coverages = store.query(CoverageAssessment, review_id=review_id)
+    sotas = store.query(SotaSummary, review_id=review_id)
 
     status_counts: dict[str, int] = {}
     for p in papers:
         status_counts[p.status] = status_counts.get(p.status, 0) + 1
+
+    # Count papers with code/benchmarks tracked
+    papers_with_code = sum(1 for p in papers if p.code_url)
+    papers_with_datasets = sum(1 for p in papers if p.datasets)
 
     summary = {
         "ok": True,
@@ -149,6 +157,8 @@ def review_summary(review_id: str):
             "total_assessments": len(assessments),
             "total_searches": len(searches),
             "total_notes": len(notes),
+            "papers_with_code": papers_with_code,
+            "papers_with_datasets": papers_with_datasets,
             "recent_searches": [
                 {"query": s.query, "source": s.source, "result_count": s.result_count}
                 for s in searches[:10]
@@ -159,6 +169,7 @@ def review_summary(review_id: str):
                 "gaps": coverages[0].gaps,
                 "areas_covered": coverages[0].areas_covered,
             } if coverages else None,
+            "has_sota_summary": len(sotas) > 0,
             "recent_notes": [
                 {"kind": n.kind, "content": n.content[:200]}
                 for n in notes[:10]

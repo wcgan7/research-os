@@ -16,6 +16,7 @@ from research_os.sources.arxiv import ArxivClient
 from research_os.sources.cache import Cache
 from research_os.sources.openalex import OpenAlexClient
 from research_os.sources.semantic_scholar import SemanticScholarClient
+from research_os.sources.web_search import WebSearchClient
 from research_os.store.db import get_connection, init_schema
 from research_os.store.models import (
     Assessment,
@@ -24,6 +25,7 @@ from research_os.store.models import (
     Paper,
     ReviewNote,
     SearchRecord,
+    SotaSummary,
 )
 from research_os.store.store import Store
 
@@ -46,6 +48,7 @@ def _make_sources(config: Config) -> dict:
         "semantic_scholar": SemanticScholarClient(http, cache, api_key=config.s2_api_key),
         "arxiv": ArxivClient(http, cache),
         "openalex": OpenAlexClient(http, cache),
+        "web_search": WebSearchClient(),
     }
 
 
@@ -137,11 +140,15 @@ def lit_status(review_id: str):
     searches = store.query(SearchRecord, review_id=review.id)
     notes = store.query(ReviewNote, review_id=review.id)
     coverages = store.query(CoverageAssessment, review_id=review.id)
+    sotas = store.query(SotaSummary, review_id=review.id)
 
     # Count papers by status
     status_counts: dict[str, int] = {}
     for p in papers:
         status_counts[p.status] = status_counts.get(p.status, 0) + 1
+
+    papers_with_code = sum(1 for p in papers if p.code_url)
+    papers_with_datasets = sum(1 for p in papers if p.datasets)
 
     panel_text = f"[bold]{review.topic}[/bold]\n"
     panel_text += f"Objective: {review.objective}\n"
@@ -152,6 +159,10 @@ def lit_status(review_id: str):
     panel_text += f"\nAssessments: {len(assessments)}\n"
     panel_text += f"Searches: {len(searches)}\n"
     panel_text += f"Notes: {len(notes)}\n"
+    if papers_with_code or papers_with_datasets:
+        panel_text += f"Code tracked: {papers_with_code} papers\n"
+        panel_text += f"Datasets tracked: {papers_with_datasets} papers\n"
+    panel_text += f"SOTA summary: {'Yes' if sotas else 'No'}\n"
 
     if coverages:
         latest = coverages[0]
@@ -366,6 +377,47 @@ def lit_bibtex(review_id: str, output: str | None):
     else:
         console.print(bibtex)
         console.print(f"\n[dim]{count} entries[/dim]")
+
+
+@lit.command("sota")
+@click.argument("review_id")
+def lit_sota(review_id: str):
+    """Show state-of-the-art summary from a review."""
+    _, store = _setup()
+    review = _find_review(store, review_id)
+    if not review:
+        return
+
+    summaries = store.query(SotaSummary, review_id=review.id)
+    if not summaries:
+        console.print("No SOTA summary yet. Run a review with save_sota_summary to generate one.")
+        return
+
+    latest = summaries[0]
+    text = f"[bold]State of the Art — {review.topic}[/bold]\n\n"
+    text += f"{latest.summary}\n\n"
+
+    text += "[bold]Best Methods:[/bold]\n"
+    for m in latest.best_methods:
+        text += f"  - {m}\n"
+
+    text += "\n[bold]Key Benchmarks:[/bold]\n"
+    for b in latest.key_benchmarks:
+        text += f"  - {b}\n"
+
+    text += "\n[bold]Open-Source Implementations:[/bold]\n"
+    for impl in latest.open_source_implementations:
+        text += f"  - {impl}\n"
+
+    text += "\n[bold]Open Problems:[/bold]\n"
+    for p in latest.open_problems:
+        text += f"  - {p}\n"
+
+    text += "\n[bold]Trends:[/bold]\n"
+    for t in latest.trends:
+        text += f"  - {t}\n"
+
+    console.print(Panel(text, title=f"SOTA — {_short_id(review.id)}"))
 
 
 @lit.command("seed")
