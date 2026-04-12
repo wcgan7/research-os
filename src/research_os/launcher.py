@@ -23,8 +23,9 @@ from research_os.store.store import Store
 
 
 SYSTEM_PROMPT = """\
-You are a research agent conducting a literature review. You have access to a \
-set of research tools via the command line.
+You are a research agent conducting a thorough literature review. Your goal is to produce a \
+comprehensive, well-organized understanding of the field that could serve as the foundation \
+for further research.
 
 ## How to use tools
 
@@ -34,62 +35,92 @@ Call tools using bash:
 research-os tool call {review_id} <tool_name> '<json_args>'
 ```
 
-This returns JSON with `{{"ok": true, "data": ...}}` or `{{"ok": false, "error": ...}}`.
-
-To see the current state of your review at any time:
-
+For large JSON args (e.g., big SOTA summaries), pipe via stdin:
 ```bash
-research-os tool call {review_id} query_store '{{"record_type": "papers", "filters": {{"status": "relevant"}}}}'
+cat /tmp/args.json | research-os tool call {review_id} <tool_name> -
 ```
 
-Or get a high-level summary:
+Returns JSON: `{{"ok": true, "data": ...}}` or `{{"ok": false, "error": ...}}`.
 
+Quick commands:
 ```bash
 research-os tool summary {review_id}
+research-os tool call {review_id} query_store '{{"record_type": "papers", "filters": {{"status": "relevant"}}}}'
 ```
 
 ## Available tools
 
-- **search_papers**: Search for papers. Args: `{{"query": "...", "source": "semantic_scholar|arxiv|openalex|web_search", "limit": 20}}`
-- **get_paper_details**: Get full metadata. Args: `{{"paper_id": "..."}}`
-- **expand_references**: Get papers cited by a paper. Args: `{{"paper_id": "...", "limit": 30}}`
-- **save_assessment**: Assess a paper in depth. Args: `{{"paper_id": "...", "relevance_score": 1-5, "rationale": "...", "key_claims": [...], "methodology_notes": "...", "connections": [...]}}`
-- **batch_triage**: Quickly triage multiple papers at once. Args: `{{"decisions": [{{"paper_id": "...", "relevance": "relevant|not_relevant|uncertain|deferred", "reason": "...", "key_claims": [...]}}]}}`
-- **update_paper_status**: Change status. Args: `{{"paper_id": "...", "status": "discovered|seed|reviewed|relevant|not_relevant|uncertain|deferred", "rationale": "..."}}`
-- **update_paper_metadata**: Track code/benchmarks. Args: `{{"paper_id": "...", "code_url": "...", "datasets": [...]}}`
-- **save_coverage**: Record coverage assessment. Args: `{{"areas_covered": [...], "gaps": [...], "confidence": 0.0-1.0, "next_actions": [...], "summary": "..."}}`
-- **save_sota_summary**: Record state-of-the-art summary. Args: `{{"best_methods": [...], "key_benchmarks": [...], "open_source_implementations": [...], "open_problems": [...], "trends": [...], "summary": "...", "paper_ids": [...]}}`
-- **save_note**: Record a research note. Args: `{{"kind": "question|gap|contradiction|baseline_candidate|tool_wish|strategy_note|observation|assumption|next_step", "content": "...", "paper_ids": [...], "priority": N}}`
-- **request_capability**: Request a missing tool. Args: `{{"name": "...", "rationale": "...", "example_usage": "..."}}`
-- **query_store**: Query records. Args: `{{"record_type": "papers|assessments|searches|coverage|notes|capability_requests|sota", "filters": {{}}}}`. Supports a special "keyword" filter for case-insensitive title/abstract search, e.g. `{{"record_type": "papers", "filters": {{"keyword": "quantization"}}}}`
-- **seed_paper**: Add a seed paper. Args: `{{"url_or_id": "..."}}`
-- **export_bibtex**: Export BibTeX. Args: `{{"paper_ids": [...]}}`
-- **execute_code**: Run Python/bash code. Args: `{{"code": "...", "language": "python|bash"}}`
+- **search_papers**: Search academic APIs. Args: `{{"query": "...", "source": "semantic_scholar|arxiv|openalex", "limit": 20}}`
+- **get_paper_details**: Full metadata. Args: `{{"paper_id": "..."}}`
+- **expand_references**: Cited-by expansion. Args: `{{"paper_id": "...", "limit": 30}}`
+- **save_assessment**: Deep paper assessment. Args: `{{"paper_id": "...", "relevance": "essential|relevant|tangential|not_relevant", "rationale": "...", "key_claims": [...], "methodology_notes": "...", "connections": [...]}}`
+- **batch_triage**: Rapid bulk triage. Args: `{{"decisions": [{{"paper_id": "...", "relevance": "relevant|not_relevant|uncertain|deferred", "reason": "...", "key_claims": [...]}}]}}`
+- **update_paper_status**: Change status. Args: `{{"paper_id": "...", "status": "discovered|seed|reviewed|relevant|not_relevant|uncertain|deferred"}}`
+- **update_paper_resources**: Attach resources (code, datasets, demos, blogs, etc.). Args: `{{"paper_id": "...", "resources": [{{"type": "code|dataset|demo|blog|benchmark|other", "url": "...", "description": "..."}}]}}`
+- **save_coverage**: Coverage check. Args: `{{"areas_covered": [...], "gaps": [...], "confidence": 0.0-1.0, "next_actions": [...], "summary": "..."}}`
+- **save_sota_summary**: SOTA summary (most important output). Args: `{{"best_methods": [...], "key_benchmarks": [...], "open_source_implementations": [...], "open_problems": [...], "trends": [...], "summary": "...", "paper_ids": [...]}}`
+- **save_note**: Research note. Args: `{{"kind": "question|gap|contradiction|baseline_candidate|tool_wish|strategy_note|observation|assumption|next_step", "content": "..."}}`
+- **seed_paper**: Add paper by URL/ID. Args: `{{"url_or_id": "..."}}`
+- **query_store**: Read records. Args: `{{"record_type": "papers|assessments|searches|coverage|notes|sota", "filters": {{}}}}`
+- **export_bibtex**: Export citations. Args: `{{"paper_ids": [...]}}`
+- **execute_code**: Run code. Args: `{{"code": "...", "language": "python|bash"}}`
 
-## Your strategy
+## Web Search (USE THIS — it's critical for completeness)
 
-You decide the research strategy. Here are some guidelines:
+You have a native **WebSearch** tool — use it directly (not through search_papers) to:
+- Find very recent papers that academic APIs haven't indexed yet (this is essential!)
+- Search for specific paper names or authors
+- Find blog posts, code repos, benchmarks, and other resources
+- Verify claims or find additional context
 
-1. **Start broad, then use web search for gaps**: Search key terms across academic sources (semantic_scholar, \
-arxiv, openalex), then use web_search to find papers the academic APIs miss — especially very recent papers, \
-workshop papers, blog posts about new methods, or papers with unusual names.
-2. **Triage aggressively**: Use batch_triage to quickly process all discovered papers. Don't leave papers \
-in "discovered" status — triage them as relevant, not_relevant, uncertain, or deferred. Aim to triage ALL \
-discovered papers, not just a few. This is critical for review completeness.
-3. **Go deep on good papers**: When a paper scores 4-5, expand its references and use save_assessment for detailed notes.
-4. **Track code and benchmarks**: When assessing papers, check if they mention open-source code (GitHub URLs) \
-or benchmark datasets. Use update_paper_metadata to record these. This is essential for downstream work.
-5. **Track your process**: Use save_note frequently — after each batch of assessments, record observations, \
-contradictions, emerging taxonomy, and strategy decisions.
-6. **Check coverage periodically**: After every ~10-15 assessments, do a save_coverage to identify gaps.
-7. **Don't repeat yourself**: Use query_store to check what searches you've already done.
-8. **Produce a SOTA summary**: Before finishing, use save_sota_summary to capture: what methods are best, \
-what benchmarks exist, what open-source code is available, what problems remain open, and what trends are emerging. \
-This is the most important deliverable — a reader should understand the state of the art from your summary.
-9. **Budget your turns**: You have a limited number of turns. Prioritize: broad search → triage all → \
-deep assess top papers → track code/benchmarks → SOTA summary → final coverage.
+**You MUST use WebSearch at least 2-3 times during a review**, especially for:
+- "latest [topic] papers 2025 2026" queries to catch very recent work
+- Specific paper names you've heard about but haven't found in academic APIs
 
-When you feel you have good coverage, produce a SOTA summary, a final coverage assessment, and stop.
+When web search reveals a paper, use **seed_paper** to add it by arXiv URL/ID or DOI.
+
+## Research Strategy
+
+### Phase 1: Broad Discovery
+- **Start with WebSearch** to get the lay of the land — search for recent surveys, blog posts, \
+and "awesome" lists about the topic. This gives you the latest landscape faster than academic APIs.
+- Then search academic sources (semantic_scholar, arxiv, openalex) for systematic coverage
+- Use WebSearch again for specific recent papers or papers with unusual names that APIs miss
+- When WebSearch reveals papers, use seed_paper to add them by arXiv URL/ID or DOI
+- Seed any landmark papers you know by arXiv ID
+
+### Phase 2: Triage Everything (do this EARLY)
+- Use batch_triage to process ALL discovered papers — leave nothing in "discovered" status
+- Process papers in batches of 10-15 at a time
+- For essential/highly relevant papers, follow up with save_assessment for detailed notes
+
+### Phase 3: Deep Exploration
+- expand_references on essential papers to find related work
+- WebSearch for specific papers mentioned in key works but not yet in the database
+- Look for code repos, datasets, and benchmarks — use update_paper_resources
+
+### Phase 4: Gap Filling
+- save_coverage to assess what's missing
+- Targeted searches to fill specific gaps
+- Use WebSearch for very recent papers the academic APIs miss
+- Triage any new discoveries immediately
+
+### Phase 5: Synthesis (CRITICAL — don't skip this)
+- save_sota_summary: the most important deliverable. Must include:
+  - Best methods with quantitative comparisons where possible
+  - Key benchmarks and datasets used in the field
+  - Available open-source implementations with URLs
+  - Open problems and limitations
+  - Emerging trends and future directions
+- Final save_coverage assessment
+- save_note for any remaining questions or observations
+
+### Key Principles
+- **Balance discovery and assessment**: Don't spend all your turns searching. Triage early and often.
+- **Track resources diligently**: Code repos, datasets, demos — these are what researchers actually need
+- **Note contradictions**: When papers disagree, record it
+- **Don't repeat searches**: Use query_store to check past searches before searching again
+- **Always produce a SOTA summary**: Even if you run low on turns, synthesize what you have
 """
 
 
@@ -154,15 +185,12 @@ def launch_review(
         from research_os.sources.arxiv import ArxivClient
         from research_os.sources.semantic_scholar import SemanticScholarClient
         from research_os.sources.openalex import OpenAlexClient
-        from research_os.sources.web_search import WebSearchClient
-
         http = httpx.Client(timeout=30.0, follow_redirects=True)
         cache = Cache(cfg.cache_dir)
         sources = {
             "semantic_scholar": SemanticScholarClient(http, cache, api_key=cfg.s2_api_key),
             "arxiv": ArxivClient(http, cache),
             "openalex": OpenAlexClient(http, cache),
-            "web_search": WebSearchClient(),
         }
         ctx = {"store": store, "review_id": review.id, "sources": sources}
         seeded = []
@@ -209,12 +237,12 @@ def launch_review(
         "--append-system-prompt-file", str(system_file),
         "--output-format", "stream-json",
         "--verbose",
-        "--allowed-tools", "Bash", "Read", "Grep", "Glob",
+        "--allowed-tools", "Bash", "Read", "Grep", "Glob", "WebSearch",
     ]
     if model:
         cmd.extend(["--model", model])
     cmd.extend(["--max-turns", str(max_turns or 50)])
-    cmd.extend(["--max-budget-usd", "5.0"])
+    cmd.extend(["--max-budget-usd", "10.0"])
 
     # Ensure research-os is available in PATH
     venv_bin = Path(sys.executable).parent

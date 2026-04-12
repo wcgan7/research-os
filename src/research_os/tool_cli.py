@@ -18,7 +18,6 @@ from research_os.sources.arxiv import ArxivClient
 from research_os.sources.cache import Cache
 from research_os.sources.openalex import OpenAlexClient
 from research_os.sources.semantic_scholar import SemanticScholarClient
-from research_os.sources.web_search import WebSearchClient
 from research_os.store.db import get_connection, init_schema
 from research_os.store.store import Store
 
@@ -36,7 +35,6 @@ def _setup(review_id: str) -> tuple[dict, str]:
         "semantic_scholar": SemanticScholarClient(http, cache, api_key=cfg.s2_api_key),
         "arxiv": ArxivClient(http, cache),
         "openalex": OpenAlexClient(http, cache),
-        "web_search": WebSearchClient(),
     }
     ctx = {"store": store, "review_id": review_id, "sources": sources}
     return ctx, review_id
@@ -56,6 +54,8 @@ def tool_call(review_id: str, tool_name: str, args_json: str):
     """Call a tool by name with JSON arguments.
 
     Usage: research-os tool call <review_id> <tool_name> '<json_args>'
+
+    For large JSON, pipe via stdin: echo '<json>' | research-os tool call <id> <tool> -
     """
     from research_os.agent.tools import TOOL_FUNCTIONS
 
@@ -63,6 +63,10 @@ def tool_call(review_id: str, tool_name: str, args_json: str):
     if not fn:
         json.dump({"ok": False, "error": f"Unknown tool: {tool_name}"}, sys.stdout)
         sys.exit(1)
+
+    # Support reading from stdin with "-" argument
+    if args_json == "-":
+        args_json = sys.stdin.read().strip()
 
     try:
         args = json.loads(args_json) if args_json else {}
@@ -141,9 +145,7 @@ def review_summary(review_id: str):
     for p in papers:
         status_counts[p.status] = status_counts.get(p.status, 0) + 1
 
-    # Count papers with code/benchmarks tracked
-    papers_with_code = sum(1 for p in papers if p.code_url)
-    papers_with_datasets = sum(1 for p in papers if p.datasets)
+    papers_with_resources = sum(1 for p in papers if p.resources)
 
     summary = {
         "ok": True,
@@ -157,8 +159,7 @@ def review_summary(review_id: str):
             "total_assessments": len(assessments),
             "total_searches": len(searches),
             "total_notes": len(notes),
-            "papers_with_code": papers_with_code,
-            "papers_with_datasets": papers_with_datasets,
+            "papers_with_resources": papers_with_resources,
             "recent_searches": [
                 {"query": s.query, "source": s.source, "result_count": s.result_count}
                 for s in searches[:10]

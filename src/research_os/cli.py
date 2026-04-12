@@ -16,7 +16,6 @@ from research_os.sources.arxiv import ArxivClient
 from research_os.sources.cache import Cache
 from research_os.sources.openalex import OpenAlexClient
 from research_os.sources.semantic_scholar import SemanticScholarClient
-from research_os.sources.web_search import WebSearchClient
 from research_os.store.db import get_connection, init_schema
 from research_os.store.models import (
     Assessment,
@@ -48,7 +47,6 @@ def _make_sources(config: Config) -> dict:
         "semantic_scholar": SemanticScholarClient(http, cache, api_key=config.s2_api_key),
         "arxiv": ArxivClient(http, cache),
         "openalex": OpenAlexClient(http, cache),
-        "web_search": WebSearchClient(),
     }
 
 
@@ -80,14 +78,16 @@ def lit():
 @click.option("--seed", "-s", multiple=True, help="Seed paper URL or ID (can repeat)")
 @click.option("--model", "-m", default=None, help="Model override")
 @click.option("--max-turns", default=None, type=int, help="Max agent turns")
-def lit_new(topic: str, objective: str, seed: tuple[str, ...], model: str | None, max_turns: int | None):
-    """Start a new literature review using claude -p."""
+@click.option("--continue-review", "-c", default=None, help="Continue an existing review by ID")
+def lit_new(topic: str, objective: str, seed: tuple[str, ...], model: str | None, max_turns: int | None, continue_review: str | None):
+    """Start a new literature review or continue an existing one using claude -p."""
     from research_os.launcher import launch_review
 
     result = launch_review(
         topic=topic,
         objective=objective,
         seed_urls=list(seed) if seed else None,
+        review_id=continue_review,
         model=model,
         max_turns=max_turns,
     )
@@ -147,8 +147,7 @@ def lit_status(review_id: str):
     for p in papers:
         status_counts[p.status] = status_counts.get(p.status, 0) + 1
 
-    papers_with_code = sum(1 for p in papers if p.code_url)
-    papers_with_datasets = sum(1 for p in papers if p.datasets)
+    papers_with_resources = sum(1 for p in papers if p.resources)
 
     panel_text = f"[bold]{review.topic}[/bold]\n"
     panel_text += f"Objective: {review.objective}\n"
@@ -159,9 +158,8 @@ def lit_status(review_id: str):
     panel_text += f"\nAssessments: {len(assessments)}\n"
     panel_text += f"Searches: {len(searches)}\n"
     panel_text += f"Notes: {len(notes)}\n"
-    if papers_with_code or papers_with_datasets:
-        panel_text += f"Code tracked: {papers_with_code} papers\n"
-        panel_text += f"Datasets tracked: {papers_with_datasets} papers\n"
+    if papers_with_resources:
+        panel_text += f"Papers with resources: {papers_with_resources}\n"
     panel_text += f"SOTA summary: {'Yes' if sotas else 'No'}\n"
 
     if coverages:

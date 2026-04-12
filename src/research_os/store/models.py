@@ -42,7 +42,7 @@ class Paper(BaseRecord):
     __table_name__: ClassVar[str] = "papers"
 
     review_id: str = ""
-    source: str = ""  # semantic_scholar | arxiv | openalex | web_search | manual
+    source: str = ""  # semantic_scholar | arxiv | openalex | manual
     external_id: str = ""
     title: str = ""
     authors: list[str] = field(default_factory=list)
@@ -53,8 +53,9 @@ class Paper(BaseRecord):
     citation_count: int | None = None
     # discovered | seed | reviewed | relevant | not_relevant | uncertain | deferred
     status: str = "discovered"
-    code_url: str | None = None  # URL to open-source implementation
-    datasets: list[str] = field(default_factory=list)  # benchmark datasets used
+    # Generic resources: code repos, datasets, demos, blog posts, etc.
+    # Each entry is a JSON string like {"type": "code", "url": "...", "description": "..."}
+    resources: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -63,7 +64,7 @@ class Assessment(BaseRecord):
 
     review_id: str = ""
     paper_id: str = ""
-    relevance_score: int = 0  # 1-5
+    relevance: str = ""  # essential | relevant | tangential | not_relevant
     rationale: str = ""
     key_claims: list[str] = field(default_factory=list)
     methodology_notes: str | None = None

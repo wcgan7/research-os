@@ -39,11 +39,12 @@ class SemanticScholarClient:
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         """Make a request with rate limiting and retry on 429."""
         self._rate_limit()
-        for attempt in range(4):
+        for attempt in range(5):
             self._last_request = time.time()
             resp = self.http.request(method, url, headers=self._headers(), **kwargs)
-            if resp.status_code == 429 and attempt < 3:
-                time.sleep(2 ** (attempt + 1))
+            if resp.status_code == 429 and attempt < 4:
+                wait = 3 * (2 ** attempt)  # 3, 6, 12, 24 seconds
+                time.sleep(wait)
                 continue
             return resp
         return resp  # type: ignore[possibly-undefined]

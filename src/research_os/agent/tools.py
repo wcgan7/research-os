@@ -36,7 +36,7 @@ def search_papers(ctx: ToolContext, query: str, source: str = "semantic_scholar"
     if not client:
         return ToolResult(ok=False, error=f"Unknown source: {source}. Available: {list(sources.keys())}")
 
-    if source in ("arxiv", "web_search"):
+    if source == "arxiv":
         result = client.search(query, max_results=limit)
     else:
         result = client.search(query, limit=limit)
@@ -208,7 +208,7 @@ def expand_references(ctx: ToolContext, paper_id: str, limit: int = 30) -> ToolR
 def save_assessment(
     ctx: ToolContext,
     paper_id: str,
-    relevance_score: int,
+    relevance: str,
     rationale: str,
     key_claims: list[str] | None = None,
     methodology_notes: str | None = None,
@@ -221,10 +221,14 @@ def save_assessment(
     if not paper:
         return ToolResult(ok=False, error=f"Paper not found: {paper_id}")
 
+    valid_relevance = {"essential", "relevant", "tangential", "not_relevant"}
+    if relevance not in valid_relevance:
+        return ToolResult(ok=False, error=f"Invalid relevance: {relevance}. Valid: {valid_relevance}")
+
     assessment = Assessment(
         review_id=review_id,
         paper_id=paper_id,
-        relevance_score=relevance_score,
+        relevance=relevance,
         rationale=rationale,
         key_claims=key_claims or [],
         methodology_notes=methodology_notes,
@@ -232,13 +236,9 @@ def save_assessment(
     )
     store.save(assessment)
 
-    # Update paper status based on score
-    if relevance_score >= 4:
-        paper.status = "relevant"
-    elif relevance_score >= 3:
-        paper.status = "reviewed"
-    else:
-        paper.status = "not_relevant"
+    # Update paper status
+    status_map = {"essential": "relevant", "relevant": "relevant", "tangential": "reviewed", "not_relevant": "not_relevant"}
+    paper.status = status_map[relevance]
     store.save(paper)
 
     return ToolResult(ok=True, data={
@@ -606,19 +606,16 @@ def batch_triage(
             continue
 
         # Create a lightweight assessment
-        score_map = {"relevant": 4, "not_relevant": 1, "uncertain": 3, "deferred": 2}
         assessment = Assessment(
             review_id=review_id,
             paper_id=paper_id,
-            relevance_score=score_map[relevance],
+            relevance=relevance,
             rationale=reason,
             key_claims=d.get("key_claims", []),
         )
         store.save(assessment)
 
-        # Update paper status
-        status_map = {"relevant": "relevant", "not_relevant": "not_relevant", "uncertain": "uncertain", "deferred": "deferred"}
-        paper.status = status_map[relevance]
+        paper.status = relevance
         store.save(paper)
 
         results.append({"paper_id": paper_id, "title": paper.title[:60], "status": paper.status})
@@ -663,16 +660,15 @@ def save_sota_summary(
     return ToolResult(ok=True, data={"sota_id": sota.id})
 
 
-def update_paper_metadata(
+def update_paper_resources(
     ctx: ToolContext,
     paper_id: str,
-    code_url: str | None = None,
-    datasets: list[str] | None = None,
+    resources: list[dict],
 ) -> ToolResult:
-    """Update a paper's code URL and/or benchmark datasets.
+    """Add resources to a paper (code repos, datasets, demos, blog posts, etc.).
 
-    Use this when you discover that a paper has an open-source implementation
-    or uses specific benchmark datasets.
+    Each resource is {"type": "code|dataset|demo|blog|other", "url": "...", "description": "..."}.
+    New resources are appended to existing ones (no duplicates by URL).
     """
     store: Store = ctx["store"]
 
@@ -680,17 +676,32 @@ def update_paper_metadata(
     if not paper:
         return ToolResult(ok=False, error=f"Paper not found: {paper_id}")
 
-    if code_url is not None:
-        paper.code_url = code_url
-    if datasets is not None:
-        paper.datasets = datasets
+    import json as _json
+    # Parse existing resources
+    existing = []
+    for r in paper.resources:
+        try:
+            existing.append(_json.loads(r) if isinstance(r, str) else r)
+        except _json.JSONDecodeError:
+            existing.append({"description": r})
+
+    existing_urls = {r.get("url", "") for r in existing if r.get("url")}
+
+    added = []
+    for res in resources:
+        if res.get("url") and res["url"] in existing_urls:
+            continue
+        existing.append(res)
+        added.append(res)
+
+    paper.resources = [_json.dumps(r) if isinstance(r, dict) else r for r in existing]
     store.save(paper)
 
     return ToolResult(ok=True, data={
         "paper_id": paper_id,
         "title": paper.title,
-        "code_url": paper.code_url,
-        "datasets": paper.datasets,
+        "resources_added": len(added),
+        "total_resources": len(existing),
     })
 
 
@@ -706,8 +717,8 @@ TOOL_DEFINITIONS: list[dict] = [
                 "query": {"type": "string", "description": "Search query"},
                 "source": {
                     "type": "string",
-                    "enum": ["semantic_scholar", "arxiv", "openalex", "web_search"],
-                    "description": "Which source to search. Default: semantic_scholar. Use web_search to find papers that academic APIs miss.",
+                    "enum": ["semantic_scholar", "arxiv", "openalex"],
+                    "description": "Which academic API to search. Default: semantic_scholar.",
                 },
                 "limit": {"type": "integer", "description": "Max results to return. Default: 20"},
             },
@@ -739,12 +750,16 @@ TOOL_DEFINITIONS: list[dict] = [
     },
     {
         "name": "save_assessment",
-        "description": "Record your assessment of a paper's relevance to the review. Also updates the paper's status based on the score.",
+        "description": "Record a detailed assessment of a paper. Updates paper status accordingly.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "paper_id": {"type": "string", "description": "Internal paper record ID"},
-                "relevance_score": {"type": "integer", "minimum": 1, "maximum": 5, "description": "1=irrelevant, 5=essential"},
+                "relevance": {
+                    "type": "string",
+                    "enum": ["essential", "relevant", "tangential", "not_relevant"],
+                    "description": "How relevant is this paper to the review topic",
+                },
                 "rationale": {"type": "string", "description": "Why this paper is or isn't relevant"},
                 "key_claims": {
                     "type": "array",
@@ -758,7 +773,7 @@ TOOL_DEFINITIONS: list[dict] = [
                     "description": "Connections to other papers or ideas in this review",
                 },
             },
-            "required": ["paper_id", "relevance_score", "rationale"],
+            "required": ["paper_id", "relevance", "rationale"],
         },
     },
     {
@@ -957,20 +972,27 @@ TOOL_DEFINITIONS: list[dict] = [
         },
     },
     {
-        "name": "update_paper_metadata",
-        "description": "Update a paper's code URL and/or benchmark datasets. Use when you discover a paper has an open-source implementation or uses specific benchmarks.",
+        "name": "update_paper_resources",
+        "description": "Add resources to a paper: code repos, datasets, demos, blog posts, videos, or any other related links. Resources are deduplicated by URL.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "paper_id": {"type": "string", "description": "Internal paper record ID"},
-                "code_url": {"type": "string", "description": "URL to open-source implementation (GitHub, etc.)"},
-                "datasets": {
+                "resources": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Benchmark datasets used by this paper",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "description": "Resource type: code, dataset, demo, blog, video, benchmark, other"},
+                            "url": {"type": "string", "description": "URL to the resource"},
+                            "description": {"type": "string", "description": "Brief description"},
+                        },
+                        "required": ["type", "url"],
+                    },
+                    "description": "List of resources to add",
                 },
             },
-            "required": ["paper_id"],
+            "required": ["paper_id", "resources"],
         },
     },
 ]
@@ -993,5 +1015,5 @@ TOOL_FUNCTIONS: dict[str, callable] = {
     "execute_code": execute_code,
     "batch_triage": batch_triage,
     "save_sota_summary": save_sota_summary,
-    "update_paper_metadata": update_paper_metadata,
+    "update_paper_resources": update_paper_resources,
 }
