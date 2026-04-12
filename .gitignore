@@ -5,3 +5,8 @@ dist/
 build/
 .eggs/
 *.egg
+
+# Overdrive runtime data
+.overdrive/
+.overdrive_archive/
+.workdoc.md

@@ -361,11 +361,31 @@ def query_store(ctx: ToolContext, record_type: str, filters: dict | None = None)
         return ToolResult(ok=False, error=f"Unknown record type: {record_type}. Valid: {list(type_map.keys())}")
 
     query_filters = {"review_id": review_id}
+    # Extract special filters before passing to store
+    keyword = None
     if filters:
+        keyword = filters.pop("keyword", None)
         query_filters.update(filters)
 
     import dataclasses
     records = store.query(cls, **query_filters)
+
+    # Apply keyword filter (case-insensitive title/content search)
+    if keyword and records:
+        kw = keyword.lower()
+        filtered = []
+        for r in records:
+            searchable = ""
+            if hasattr(r, "title"):
+                searchable += (r.title or "").lower()
+            if hasattr(r, "abstract"):
+                searchable += " " + (r.abstract or "").lower()
+            if hasattr(r, "content"):
+                searchable += " " + (r.content or "").lower()
+            if kw in searchable:
+                filtered.append(r)
+        records = filtered
+
     data = [dataclasses.asdict(r) for r in records]
     return ToolResult(ok=True, data={"count": len(data), "records": data})
 
@@ -693,7 +713,7 @@ TOOL_DEFINITIONS: list[dict] = [
                 },
                 "filters": {
                     "type": "object",
-                    "description": "Optional filters as key-value pairs (e.g., {\"status\": \"discovered\"})",
+                    "description": "Optional filters. Exact-match fields (e.g., {\"status\": \"relevant\"}), plus special \"keyword\" filter for case-insensitive title/abstract search (e.g., {\"keyword\": \"quantization\"})",
                 },
             },
             "required": ["record_type"],

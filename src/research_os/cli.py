@@ -40,7 +40,7 @@ def _setup(config: Config | None = None) -> tuple[Config, Store]:
 
 def _make_sources(config: Config) -> dict:
     """Create source clients."""
-    http = httpx.Client(timeout=30.0)
+    http = httpx.Client(timeout=30.0, follow_redirects=True)
     cache = Cache(config.cache_dir)
     return {
         "semantic_scholar": SemanticScholarClient(http, cache, api_key=config.s2_api_key),
@@ -60,6 +60,11 @@ def cli():
     pass
 
 
+# Register tool CLI subcommand
+from research_os.tool_cli import tool_group
+cli.add_command(tool_group, "tool")
+
+
 @cli.group()
 def lit():
     """Literature review commands."""
@@ -70,63 +75,22 @@ def lit():
 @click.argument("topic")
 @click.option("--objective", "-o", required=True, help="What you want to learn")
 @click.option("--seed", "-s", multiple=True, help="Seed paper URL or ID (can repeat)")
-@click.option(
-    "--provider", "-p", default=None,
-    type=click.Choice(["anthropic_api", "claude_cli"]),
-    help="LLM provider (default: from RESEARCH_OS_PROVIDER env, or anthropic_api)",
-)
 @click.option("--model", "-m", default=None, help="Model override")
-def lit_new(topic: str, objective: str, seed: tuple[str, ...], provider: str | None, model: str | None):
-    """Start a new literature review."""
-    config, store = _setup()
-    if provider:
-        config.provider = provider
-    if model:
-        config.model = model
+@click.option("--max-turns", default=None, type=int, help="Max agent turns")
+def lit_new(topic: str, objective: str, seed: tuple[str, ...], model: str | None, max_turns: int | None):
+    """Start a new literature review using claude -p."""
+    from research_os.launcher import launch_review
 
-    # Validate provider requirements
-    if config.provider == "anthropic_api" and not config.anthropic_api_key:
-        console.print("[red]ANTHROPIC_API_KEY not set. Use --provider claude_cli for CLI mode.[/red]")
-        sys.exit(1)
-
-    review = LiteratureReview(topic=topic, objective=objective, status="active")
-    store.save(review)
-    console.print(f"Created review [bold]{_short_id(review.id)}[/bold]: {topic}")
-
-    sources = _make_sources(config)
-
-    # Seed papers if provided
-    if seed:
-        from research_os.agent.tools import seed_paper
-
-        ctx = {"store": store, "review_id": review.id, "sources": sources}
-        for url in seed:
-            result = seed_paper(ctx, url)
-            if result.ok:
-                console.print(f"  Seeded: {result.data.get('title', url)}")
-            else:
-                console.print(f"  [red]Failed to seed {url}: {result.error}[/red]")
-
-    # Run the agent
-    console.print("\n[bold]Starting literature review agent...[/bold]\n")
-    run_agent(
-        config=config,
+    result = launch_review(
         topic=topic,
         objective=objective,
-        store=store,
-        review_id=review.id,
-        sources=sources,
+        seed_urls=list(seed) if seed else None,
+        model=model,
+        max_turns=max_turns,
     )
 
-    review.status = "completed"
-    store.save(review)
-    console.print(f"\n[green]Review {_short_id(review.id)} completed.[/green]")
-
-    # Print summary
-    paper_count = store.count(Paper, review_id=review.id)
-    assessed = store.count(Assessment, review_id=review.id)
-    searches = store.count(SearchRecord, review_id=review.id)
-    console.print(f"  Papers: {paper_count} | Assessed: {assessed} | Searches: {searches}")
+    console.print(f"\n[green]Review {_short_id(result['review_id'])} completed.[/green]")
+    console.print(f"Logs: {result['log_dir']}")
 
 
 @lit.command("list")
