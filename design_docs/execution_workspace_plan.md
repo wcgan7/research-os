@@ -2,14 +2,15 @@
 
 ## Goal
 
-Build a baseline / implementation / execution module where:
+Build a workspace-centric research system where:
 
-- the agent gets one bounded workspace root
-- inside it, the agent may clone repos, create repos, patch code, and run experiments
-- structured records capture what matters
-- git is used opportunistically by the agent for provenance, not forced everywhere
+- each research direction gets one workspace
+- the workspace is self-contained: database, code, artifacts, logs all live together
+- inside the workspace, the agent may clone repos, create projects, patch code, run experiments
+- structured records capture what matters and are queryable
+- lit review, baseline reproduction, and experimentation are phases within one workspace
 
-This should extend the same philosophy as the literature review module:
+This extends the same philosophy as the literature review module:
 
 - a main agent drives the work
 - the system stores typed records so the work is queryable
@@ -19,38 +20,37 @@ This should extend the same philosophy as the literature review module:
 
 ## Core Design
 
-- The Research OS repo remains the control plane
-- execution happens in per-task workspaces
-- the workspace root is not itself required to be a git repo
-- repos/projects inside the workspace may each have their own git history
-- the agent decides what is worth tracking, but must record important states
+- The research-os repo is the control plane (code, tools, API, UI)
+- Each research direction gets one workspace with its own database
+- A lightweight global index tracks which workspaces exist
+- Lit review is a phase within a workspace, not a separate entity
+- The workspace root is not itself a git repo; repos inside it may have their own git history
+- The agent decides what is worth tracking, but must record important states
 
 ---
 
 ## Workspace Model
 
-Default assumption:
-
-- one research direction / task gets one workspace root
-- inside that workspace, the agent may manage multiple repos or projects
-
-Example:
+One research direction = one workspace = one database.
 
 ```text
-~/.research-os/workspaces/task-017/
-├── repos/
-│   ├── baseline-self-rag/
-│   └── baseline-graphrag/
-├── projects/
-│   └── prototype-a/
-├── artifacts/
-└── logs/
+~/.research-os/
+  index.sqlite3                         # global: workspace list, names, status
+  workspaces/{workspace_id}/
+    db.sqlite3                          # all records for this research direction
+    logs/                               # agent run logs
+    repos/                              # cloned upstream repos
+      baseline-self-rag/
+      baseline-graphrag/
+    projects/                           # agent-created code
+      prototype-a/
+    artifacts/                          # outputs, checkpoints, plots
 ```
 
-Important distinction:
+Important distinctions:
 
 - the workspace root is the bounded filesystem sandbox for the agent
-- the workspace root is not necessarily a single code repo
+- the workspace root is not a single code repo
 - each meaningful code project inside it may have its own `.git`
 
 This allows:
@@ -62,17 +62,42 @@ This allows:
 
 ---
 
+## Workspace Lifecycle
+
+1. **Provision** -- user creates a workspace through the UI with a name, topic, and objective
+2. **Literature review** -- agent surveys the field, stores papers/assessments/notes/reports in workspace db
+3. **Baseline reproduction** -- agent clones repos, patches code, reproduces key results
+4. **Experimentation** -- agent (or mastermind) forms hypotheses, runs experiments against baselines
+5. **Archive** -- workspace is self-contained, can be moved/archived/deleted as a unit
+
+The mastermind, when it exists, operates within a workspace context. It reads the workspace's database to understand what's been done and decides what to do next.
+
+---
+
+## Relationship Between Workspace and Lit Review
+
+The current `LiteratureReview` record (topic, objective, status) becomes workspace metadata. There is no separate `LiteratureReview` entity -- the workspace *is* the research direction, and lit review is one of the things that happens in it.
+
+What this means in practice:
+
+- `review_id` foreign keys on Paper, Assessment, etc. become `workspace_id`
+- The workspace record carries the topic and objective
+- Papers, assessments, notes, coverage, reports all belong directly to the workspace
+- Lit review agent runs are logged under `{workspace}/logs/`
+
+This is a refactor of the current storage model but not a rewrite -- the Store class and record models stay the same, only the database path changes from one global file to per-workspace.
+
+---
+
 ## Git Provenance Policy
 
-Git should usually track specific repos/projects inside the workspace, not the whole workspace as one giant repo.
+Git tracks specific repos/projects inside the workspace, not the whole workspace as one giant repo.
 
 Default policy:
 
 - cloned repo: preserve existing git repo and record upstream + commit
 - scratch project: initialize a local git repo if the agent starts editing code meaningfully
-- artifacts/logs/checkpoints: usually remain outside git
-
-The agent is allowed to decide what is worth tracking, but the system should record enough provenance to understand what code state was used for a run.
+- artifacts/logs/checkpoints: remain outside git
 
 Minimum provenance fields to record:
 
@@ -86,36 +111,54 @@ Minimum provenance fields to record:
 
 ## Data Model
 
-Add these record types in `src/research_os/store/models.py`.
+### Global Index (`~/.research-os/index.sqlite3`)
 
-### Baseline
+#### Workspace (global)
+
+- `id`
+- `name`
+- `topic`
+- `objective`
+- `root_path`
+- `status` (active, paused, completed, archived)
+- `created_at`
+- `updated_at`
+
+Lightweight. Just enough to list workspaces and find their paths.
+
+### Per-Workspace Database (`{workspace}/db.sqlite3`)
+
+#### Literature review records (already exist, migrated)
+
+- `Paper` -- discovered papers with metadata + extracted text
+- `Assessment` -- relevance analysis per paper
+- `SearchRecord` -- what searches were performed and why
+- `CoverageAssessment` -- gap analysis and next actions
+- `ReviewNote` -- structured notes
+- `ReviewReport` -- synthesized report
+- `CapabilityRequest` -- feature requests from agent
+
+These keep their current schema. `review_id` becomes `workspace_id`.
+
+#### Baseline and execution records (new)
+
+##### Baseline
 
 - `name`
 - `description`
-- `paper_ids`
+- `paper_ids` (list -- links to papers from lit review)
 - `source_urls`
 - `status`
 - `notes`
 
-Represents prior work or an existing system/method worth reproducing, validating, or comparing against.
+Represents prior work or an existing method worth reproducing or comparing against.
 
-### Workspace
+##### Implementation
 
+- `baseline_id` (optional -- null for scratch projects)
 - `name`
-- `root_path`
-- `purpose`
-- `baseline_id`
-- `hypothesis_id`
-- `status`
-
-Represents the bounded execution root assigned to one research direction.
-
-### Implementation
-
-- `workspace_id`
-- `name`
-- `path`
-- `source_type` (`repo|local|scratch`)
+- `path` (relative to workspace root)
+- `source_type` (repo | local | scratch)
 - `repo_url`
 - `base_commit`
 - `current_commit`
@@ -123,13 +166,12 @@ Represents the bounded execution root assigned to one research direction.
 - `modification_summary`
 - `status`
 
-Represents a specific codebase inside a workspace. This is the key provenance bridge between “paper/baseline” and “what code the agent actually ran”.
+The key provenance bridge between "paper/baseline" and "what code the agent actually ran."
 
-### Run
+##### Run
 
-- `workspace_id`
 - `implementation_id`
-- `kind` (`reproduction|baseline_eval|prototype|ablation|benchmark`)
+- `kind` (reproduction | baseline_eval | prototype | ablation | benchmark)
 - `command`
 - `cwd`
 - `status`
@@ -140,19 +182,19 @@ Represents a specific codebase inside a workspace. This is the key provenance br
 - `stdout_path`
 - `stderr_path`
 
-Represents one concrete execution attempt.
+One concrete execution attempt.
 
-### Artifact
+##### Artifact
 
 - `run_id`
 - `kind`
-- `path`
+- `path` (relative to workspace root)
 - `description`
 - `metadata_json`
 
-Represents outputs such as plots, result files, checkpoints, tables, patches, or reports.
+Outputs: plots, result files, checkpoints, tables, patches, reports.
 
-### Result
+##### Result
 
 - `run_id`
 - `summary`
@@ -160,9 +202,9 @@ Represents outputs such as plots, result files, checkpoints, tables, patches, or
 - `success`
 - `notes`
 
-Represents the interpreted outcome of a run.
+Interpreted outcome of a run.
 
-### Decision
+##### Decision
 
 - `subject_type`
 - `subject_id`
@@ -170,29 +212,22 @@ Represents the interpreted outcome of a run.
 - `rationale`
 - `evidence_ids`
 
-Represents a durable conclusion, such as “baseline reproduced”, “repo unusable”, or “prototype worth extending”.
+Durable conclusions: "baseline reproduced", "repo unusable", "prototype worth extending."
 
 ---
 
 ## Workspace Management
 
-Add a managed workspace root in config, for example:
+Config:
 
-- `RESEARCH_OS_WORKSPACES=~/.research-os/workspaces`
+- `RESEARCH_OS_WORKSPACES=~/.research-os/workspaces` (default)
 
-Implement helpers to:
+Helpers:
 
-- create workspace directories
-- register workspace records
-- create safe subpaths within a workspace
-- validate that execution stays under the workspace root
-
-Suggested default layout inside each workspace:
-
-- `repos/`
-- `projects/`
-- `artifacts/`
-- `logs/`
+- create workspace directory + subdirectories + db
+- register in global index
+- open workspace database by ID
+- validate paths stay under workspace root
 
 ---
 
@@ -200,12 +235,12 @@ Suggested default layout inside each workspace:
 
 Expose smaller primitives rather than one giant `run_experiment` tool.
 
-### Workspace / baseline tools
+### Workspace tools
 
 - `create_baseline`
-- `create_workspace`
 - `register_implementation`
 - `update_implementation_state`
+- `snapshot_implementation` (record git state)
 
 ### Execution tools
 
@@ -216,12 +251,11 @@ Expose smaller primitives rather than one giant `run_experiment` tool.
 - `attach_artifact`
 - `record_decision`
 
-### Optional provenance tools
+### Query tools
 
-- `snapshot_implementation`
-- `query_execution_state`
+- `query_store` (already exists, works across all record types)
 
-The agent should be free to decide whether to clone a repo, create one, patch code, or create helper scripts. The system should only require that the important states are recorded.
+The agent has full operational freedom in the workspace -- clone repos, patch code, write scripts, install deps, adapt broken baselines. The system only requires that important states are recorded through the tools above.
 
 ---
 
@@ -229,31 +263,39 @@ The agent should be free to decide whether to clone a repo, create one, patch co
 
 Implement a minimal execution runner that can:
 
-- start a subprocess in a selected `cwd`
+- start a subprocess in a selected cwd
 - capture stdout/stderr to files
 - record pid and lifecycle metadata
-- finalize run metadata in `finally`
+- finalize run metadata in finally
 - support explicit stop/termination
 
-This should follow the same hardening lessons learned from the literature review launcher.
+Follow the same hardening lessons from the lit review launcher (PID tracking, finally blocks, completion metadata).
 
-Likely module:
+Module: `src/research_os/execution/runner.py`
 
-- `src/research_os/execution/runner.py`
+---
+
+## Agent Prompt
+
+Draft a baseline agent system prompt covering:
+
+- strategy: inspect lit review results, pick high-value papers with code, reproduce systematically
+- when to give up on a broken repo vs. adapt it
+- how to decide a reproduction is "good enough"
+- recording discipline: every run gets a result, every significant finding gets a decision
+
+This is as important as the record types -- the lit review module's success comes largely from its well-crafted prompt.
 
 ---
 
 ## Frontend v0
 
-Add a minimal execution workspace UI.
+Minimal execution workspace UI for state inspection:
 
-Views:
-
+- workspace list/detail (extends current dashboard)
 - baselines list/detail
-- workspace detail
 - implementations in workspace
-- runs table
-- run log viewer
+- runs table with log viewer
 - results and decisions
 
 Do not build yet:
@@ -262,76 +304,43 @@ Do not build yet:
 - mastermind UI
 - full branch orchestration
 
-The goal is state inspection, not full strategic control.
+---
+
+## Migration Path
+
+To move from current global-database lit review to per-workspace model:
+
+1. Build workspace provisioning (create workspace, create per-workspace db)
+2. Update Store/API to accept a workspace path instead of global db path
+3. Migrate existing reviews: create a workspace per review, copy records, update paths
+4. Update frontend to navigate workspaces first, then into review/baseline/experiment views
+5. Deprecate global db
+
+This can be done incrementally. The lit review module continues working on the global db while the new workspace model is built alongside it.
 
 ---
 
-## Agent Workflow
-
-After the primitives exist, add one execution-oriented agent prompt.
-
-Expected flow:
-
-1. create or select baseline
-2. create workspace
-3. clone or create implementations inside workspace
-4. inspect and set up code
-5. run commands
-6. record outputs, results, and decisions
-7. optionally branch into a derived prototype inside the same workspace
-
-This gives the agent real operational freedom while preserving traceability.
-
----
-
-## Relationship To Lit Review
-
-This design suggests a broader system rule:
-
-- one research direction should generally have one workspace root
-- literature review can be treated as one such research direction
-
-That means `1 research = 1 workspace` is a reasonable default, including literature review.
-
-However, the meaning of “workspace” differs by module:
-
-- lit review workspace may be light and mostly contain logs, notes, fetched artifacts, and maybe temporary scripts
-- execution workspace may contain multiple repos, projects, and artifacts
-
-So the answer is:
-
-- yes, one research direction can map to one workspace
-- yes, that can include lit review
-- but lit review does not need to use the workspace as heavily as execution does
-
-For execution modules:
-
-- the workspace is where reproduction and experimentation actually happen
-
-For lit review:
-
-- the workspace is mostly a bounded place for process outputs and optional helper work
-
-The important thing is consistency of the abstraction, not identical usage patterns.
-
----
-
-## Recommended First Milestone
+## First Milestone
 
 Implement only this first slice:
 
-1. `Baseline`, `Workspace`, `Implementation`, `Run`, `Result`
-2. workspace root creation
-3. start/stop run APIs
-4. run log viewer frontend
-5. minimal baseline + execution agent tools
-6. smoke tests
+1. Workspace provisioning (directory + db + global index)
+2. `Baseline`, `Implementation`, `Run`, `Result`, `Decision` record types
+3. Workspace management helpers
+4. Agent tools for baseline/execution recording
+5. Runner (subprocess lifecycle management)
+6. Baseline agent prompt
+7. Minimal frontend: workspace detail, runs, results
+8. Smoke tests
 
 This is enough to support:
 
+- create workspace
 - clone repo
 - patch code
 - run baseline
 - record outcome
 
-without taking on full orchestration or mastermind logic.
+Without taking on mastermind logic or lit review migration.
+
+Lit review migration happens as a follow-up milestone once the workspace model is proven.
