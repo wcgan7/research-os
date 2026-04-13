@@ -111,13 +111,14 @@ export default function ReviewWorkspace() {
   const [stopping, setStopping] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [continueInput, setContinueInput] = useState('');
+  const [showContinueDropdown, setShowContinueDropdown] = useState(false);
+  const continueDropdownRef = useRef<HTMLDivElement>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const continueTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [steerMessage, setSteerMessage] = useState('');
   const [steerSending, setSteerSending] = useState(false);
   const [steerError, setSteerError] = useState<string | null>(null);
-  const [steerSent, setSteerSent] = useState(false);       // true after send, cleared on timeout
-  const [steerAwaitPending, setSteerAwaitPending] = useState(false); // true until poll confirms pending
+  const [steerHistory, setSteerHistory] = useState<{ text: string; sentAt: number; delivered: boolean }[]>([]);
 
   // Initial fetch
   const { data: initialReview, loading, error } = useFetch(() => fetchReview(reviewId!), [reviewId, refreshKey]);
@@ -135,6 +136,15 @@ export default function ReviewWorkspace() {
 
   const currentReview = polledReview || initialReview;
   const currentIsRunning = (currentReview?.is_running || false) || continuing;
+
+  // Once the backend has answered after a launch/continue request, stop using
+  // the optimistic local override and trust the server's run state.
+  useEffect(() => {
+    if (continuing && polledReview) {
+      if (continueTimer.current) clearTimeout(continueTimer.current);
+      setContinuing(false);
+    }
+  }, [continuing, polledReview]);
 
   // Poll for pending steering messages
   const { data: steeringData } = usePolling(
@@ -166,18 +176,45 @@ export default function ReviewWorkspace() {
     prevStats.current = statsKey;
   }, [currentReview?.stats]);
 
-  // Clear awaitPending once poll confirms the message is in the file
+  // Mark messages as delivered when poll confirms file is empty and enough time has passed
   useEffect(() => {
-    if (steerAwaitPending && steeringData?.pending) {
-      setSteerAwaitPending(false);
+    if (steeringData?.pending || !steerHistory.some(m => !m.delivered)) return;
+    const now = Date.now();
+    setSteerHistory(prev => {
+      // Only mark as delivered if at least one poll cycle (3s) has elapsed since send
+      const updated = prev.map(m =>
+        !m.delivered && now - m.sentAt > 3000 ? { ...m, delivered: true } : m
+      );
+      if (updated.every((m, i) => m.delivered === prev[i].delivered)) return prev;
+      // Auto-remove delivered messages after 5s
+      setTimeout(() => setSteerHistory(h => h.filter(m => !m.delivered)), 5000);
+      return updated;
+    });
+  }, [steeringData?.pending, steerHistory]);
+
+  useEffect(() => {
+    if (!currentReview?.is_running && steerHistory.some(m => !m.delivered)) {
+      setSteerHistory(prev => prev.map(m => (m.delivered ? m : { ...m, delivered: true })));
     }
-  }, [steerAwaitPending, steeringData?.pending]);
+  }, [currentReview?.is_running, steerHistory]);
 
   useEffect(() => {
     return () => {
       if (continueTimer.current) clearTimeout(continueTimer.current);
     };
   }, []);
+
+  // Close continue dropdown on click outside
+  useEffect(() => {
+    if (!showContinueDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (continueDropdownRef.current && !continueDropdownRef.current.contains(e.target as Node)) {
+        setShowContinueDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showContinueDropdown]);
 
   if (loading) return <Loading />;
   if (error) return <div className="p-8"><ErrorMessage message={error} /></div>;
@@ -191,6 +228,7 @@ export default function ReviewWorkspace() {
     try {
       await continueReview(currentReview.id, continueInput.trim() || undefined);
       setContinueInput('');
+      setShowContinueDropdown(false);
       // Reset after a short delay — polling will pick up is_running from the backend
       if (continueTimer.current) clearTimeout(continueTimer.current);
       continueTimer.current = setTimeout(() => setContinuing(false), 10000);
@@ -225,10 +263,8 @@ export default function ReviewWorkspace() {
     setSteerError(null);
     try {
       await steerReview(currentReview.id, msg);
-      setSteerAwaitPending(true);  // wait for poll to confirm before showing "Delivered"
-      setSteerSent(true);
+      setSteerHistory(prev => [...prev, { text: msg, sentAt: Date.now(), delivered: false }]);
       setSteerMessage('');
-      setTimeout(() => setSteerSent(false), 8000);
     } catch (err) {
       setSteerError(err instanceof Error ? err.message : 'Failed to send');
     } finally {
@@ -281,22 +317,37 @@ export default function ReviewWorkspace() {
                   {stopping ? 'Stopping...' : 'Stop Agent'}
                 </button>
               ) : (
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="text"
-                    value={continueInput}
-                    onChange={(e) => setContinueInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleContinue(); } }}
-                    placeholder="Optional instructions..."
-                    className="w-48 px-2.5 py-1.5 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-paper)] focus:outline-none focus:border-[var(--color-accent)] transition-colors"
-                  />
+                <div className="relative" ref={continueDropdownRef}>
                   <button
-                    onClick={handleContinue}
+                    onClick={() => setShowContinueDropdown(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity"
                   >
                     <PlayCircle size={15} aria-hidden="true" />
                     Continue
                   </button>
+                  {showContinueDropdown && (
+                    <div className="absolute right-0 top-full mt-1.5 w-80 bg-[var(--color-paper-card)] rounded-lg border border-[var(--color-border)] shadow-lg p-3 z-30">
+                      <input
+                        type="text"
+                        value={continueInput}
+                        onChange={(e) => setContinueInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleContinue(); } else if (e.key === 'Escape') { setShowContinueDropdown(false); } }}
+                        placeholder="Optional: guide the agent..."
+                        className="w-full px-2.5 py-1.5 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-paper)] focus:outline-none focus:border-[var(--color-accent)] transition-colors"
+                        autoFocus
+                      />
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-xs text-[var(--color-ink-muted)]">Enter to launch, Esc to cancel</span>
+                        <button
+                          onClick={handleContinue}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity"
+                        >
+                          <PlayCircle size={13} aria-hidden="true" />
+                          Launch
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -354,14 +405,22 @@ export default function ReviewWorkspace() {
               {steerError && (
                 <p className="text-xs text-red-600 mt-1">{steerError}</p>
               )}
-              {(steeringData?.pending || steerAwaitPending) && (
-                <p className="text-xs text-[var(--color-ink-muted)] mt-1.5 flex items-center gap-1.5">
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  Pending delivery
-                </p>
-              )}
-              {steerSent && !steeringData?.pending && !steerAwaitPending && (
-                <p className="text-xs text-green-600 mt-1.5">Delivered to agent</p>
+              {steerHistory.length > 0 && (
+                <div className="mt-1.5 space-y-1">
+                  {steerHistory.map((m, i) => (
+                    <p key={i} className="text-xs flex items-center gap-1.5">
+                      {m.delivered ? (
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                      ) : (
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                      )}
+                      <span className="text-[var(--color-ink-muted)] truncate">{m.text}</span>
+                      <span className={`shrink-0 ${m.delivered ? 'text-green-600' : 'text-[var(--color-ink-muted)] opacity-60'}`}>
+                        {m.delivered ? '— delivered' : '— queued'}
+                      </span>
+                    </p>
+                  ))}
+                </div>
               )}
             </div>
           )}

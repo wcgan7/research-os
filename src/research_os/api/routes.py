@@ -26,6 +26,7 @@ from research_os.store.models import (
 router = APIRouter()
 
 _SAFE_DIR_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+_RUN_STALE_HOURS = 4
 
 
 def _get_store():
@@ -43,6 +44,30 @@ def _paper_brief(paper: Paper) -> dict[str, Any]:
     d = dataclasses.asdict(paper)
     d.pop("full_text", None)
     return d
+
+
+def _run_meta_is_running(meta: dict[str, Any] | None) -> bool:
+    """Decide whether a run is still active from its metadata."""
+    if not meta or meta.get("completed_at"):
+        return False
+
+    pid = meta.get("pid")
+    if isinstance(pid, int) and not _pid_is_running(pid):
+        return False
+
+    started = meta.get("started_at")
+    if started:
+        try:
+            from datetime import datetime, timezone
+
+            start_dt = datetime.fromisoformat(started)
+            age_hours = (datetime.now(timezone.utc) - start_dt).total_seconds() / 3600
+            if age_hours >= _RUN_STALE_HOURS:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    return True
 
 
 # ── Reviews ─────────────────────────────────────────────────────────
@@ -102,20 +127,7 @@ def get_review(review_id: str):
             if meta_path.exists():
                 try:
                     meta = json.loads(meta_path.read_text())
-                    if not meta.get("completed_at"):
-                        # Check staleness — if started > 4 hours ago, assume crashed
-                        from datetime import datetime, timezone
-                        started = meta.get("started_at")
-                        if started:
-                            try:
-                                start_dt = datetime.fromisoformat(started)
-                                age_hours = (datetime.now(timezone.utc) - start_dt).total_seconds() / 3600
-                                if age_hours < 4:
-                                    is_running = True
-                            except (ValueError, TypeError):
-                                pass
-                        else:
-                            is_running = True
+                    is_running = _run_meta_is_running(meta)
                 except Exception:
                     pass
             break  # only check latest run
@@ -676,16 +688,8 @@ def continue_review(review_id: str, body: dict[str, Any] | None = None):
             if meta_path.exists():
                 try:
                     meta = json.loads(meta_path.read_text())
-                    if not meta.get("completed_at"):
-                        started = meta.get("started_at")
-                        if started:
-                            try:
-                                start_dt = datetime.fromisoformat(started)
-                                age_hours = (datetime.now(timezone.utc) - start_dt).total_seconds() / 3600
-                                if age_hours < 4:
-                                    raise HTTPException(409, "Agent is already running for this review")
-                            except (ValueError, TypeError):
-                                pass
+                    if _run_meta_is_running(meta):
+                        raise HTTPException(409, "Agent is already running for this review")
                 except json.JSONDecodeError:
                     pass
             break
@@ -736,18 +740,8 @@ def _find_active_run_dir(review: LiteratureReview) -> Path:
         if meta_path.exists():
             try:
                 meta = json.loads(meta_path.read_text())
-                if meta.get("completed_at"):
+                if not _run_meta_is_running(meta):
                     raise HTTPException(409, "Agent is not running")
-                # Staleness check — match is_running logic (4-hour cutoff)
-                started = meta.get("started_at")
-                if started:
-                    try:
-                        start_dt = datetime.fromisoformat(started)
-                        age_hours = (datetime.now(timezone.utc) - start_dt).total_seconds() / 3600
-                        if age_hours >= 4:
-                            raise HTTPException(409, "Agent is not running (stale)")
-                    except (ValueError, TypeError):
-                        pass
                 return rd
             except HTTPException:
                 raise
@@ -834,7 +828,7 @@ def get_steering(review_id: str):
         if meta_path.exists():
             try:
                 meta = json.loads(meta_path.read_text())
-                if meta.get("completed_at"):
+                if not _run_meta_is_running(meta):
                     return {"pending": None}
             except Exception:
                 return {"pending": None}
