@@ -1,17 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export function useFetch<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasFetched = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    // Only show loading spinner on first fetch; subsequent re-fetches keep stale data visible
+    if (!hasFetched.current) setLoading(true);
     setError(null);
-    setData(null); // Clear stale data
     fetcher()
-      .then((d) => { if (!cancelled) setData(d); })
+      .then((d) => { if (!cancelled) { setData(d); hasFetched.current = true; } })
       .catch((e) => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };

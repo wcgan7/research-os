@@ -186,6 +186,11 @@ WebSearch to find their code, datasets, demos. Resources are what researchers ne
 - **Note contradictions and surprises**: Use save_note when papers disagree or findings are unexpected
 - **Don't repeat searches**: Call query_store to check past searches BEFORE every new search_papers call
 - **Always produce a report**: Synthesize what you have before stopping
+
+## Steering Messages
+If you see a message prefixed with `[STEERING]`, it is a real-time instruction from the human \
+operator watching your progress. Treat it as a high-priority directive — acknowledge it briefly \
+and adjust your approach accordingly. Continue your work after incorporating the feedback.
 """
 
 
@@ -198,6 +203,8 @@ Objective: {objective}
 
 Start by querying the store to check if there's any existing work on this review, \
 then begin searching and assessing papers. Work autonomously until you have good coverage.
+
+{instructions}
 """
 
 
@@ -217,6 +224,7 @@ def launch_review(
     review_id: str | None = None,
     model: str | None = None,
     max_turns: int | None = None,
+    instructions: str | None = None,
 ) -> dict:
     """Launch a literature review using claude -p.
 
@@ -272,6 +280,7 @@ def launch_review(
         topic=topic,
         objective=objective,
         seed_instructions=seed_instructions,
+        instructions=instructions or "",
     )
 
     # Set up logging
@@ -314,6 +323,9 @@ def launch_review(
     env = os.environ.copy()
     env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
 
+    # Steering hook: set path so the PreToolUse hook knows where to read
+    env["STEERING_FILE"] = str(log_dir / "steering.md")
+
     print(f"Review ID: {review.id}")
     print(f"Log dir: {log_dir}")
     print(f"Launching claude -p ...")
@@ -329,6 +341,10 @@ def launch_review(
             cwd=str(Path.home() / "Documents" / "research-os"),
             env=env,
         )
+        # Store PID so the agent can be stopped from the UI
+        meta["pid"] = proc.pid
+        meta_path.write_text(json.dumps(meta, indent=2))
+
         proc.communicate(input=user_prompt)
 
     # Update review status
@@ -348,3 +364,56 @@ def launch_review(
         "log_dir": str(log_dir),
         "exit_code": proc.returncode,
     }
+
+
+def launch_review_background(
+    topic: str,
+    objective: str,
+    seed_urls: list[str] | None = None,
+    review_id: str | None = None,
+    model: str | None = None,
+    max_turns: int | None = None,
+) -> str:
+    """Create the review record synchronously, then launch the agent in a background thread.
+
+    Returns the review_id immediately.
+    """
+    import threading
+
+    cfg = Config()
+    conn = get_connection(cfg.db_path)
+    init_schema(conn)
+    store = Store(conn)
+
+    if review_id:
+        review = store.get(LiteratureReview, review_id)
+        if not review:
+            reviews = store.query(LiteratureReview)
+            matches = [r for r in reviews if r.id.startswith(review_id)]
+            if len(matches) == 1:
+                review = matches[0]
+            else:
+                raise ValueError(f"Review not found: {review_id}")
+    else:
+        review = LiteratureReview(topic=topic, objective=objective, status="active")
+        store.save(review)
+
+    rid = review.id
+
+    def run():
+        try:
+            launch_review(
+                topic=topic,
+                objective=objective,
+                seed_urls=seed_urls,
+                review_id=rid,
+                model=model,
+                max_turns=max_turns,
+            )
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return rid

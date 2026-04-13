@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -418,6 +419,17 @@ def _validate_path_segment(segment: str) -> None:
         raise HTTPException(400, f"Invalid path segment: {segment}")
 
 
+def _pid_is_running(pid: int) -> bool:
+    """Best-effort liveness check for a local process."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 @router.get("/reviews/{review_id}/logs")
 def get_logs(review_id: str):
     store = _get_store()
@@ -633,36 +645,16 @@ def create_review(body: dict[str, Any]):
     if not objective:
         raise HTTPException(400, "Objective is required")
 
-    import threading
-    from research_os.launcher import launch_review
+    from research_os.launcher import launch_review_background
 
-    result_holder: dict[str, Any] = {}
-
-    def run():
-        try:
-            result = launch_review(
-                topic=topic,
-                objective=objective,
-                seed_urls=seed_urls if seed_urls else None,
-            )
-            result_holder.update(result)
-        except Exception as e:
-            result_holder["error"] = str(e)
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    # Wait for review ID to be created (launch_review creates the review record
-    # before starting the subprocess, so this should be fast)
-    thread.join(timeout=10.0)
-
-    if "error" in result_holder:
-        raise HTTPException(500, result_holder["error"])
-    if not result_holder.get("review_id"):
-        raise HTTPException(500, "Review launch timed out — check server logs")
+    review_id = launch_review_background(
+        topic=topic,
+        objective=objective,
+        seed_urls=seed_urls if seed_urls else None,
+    )
 
     return {
-        "review_id": result_holder["review_id"],
-        "log_dir": result_holder.get("log_dir"),
+        "review_id": review_id,
         "status": "launched",
     }
 
@@ -701,31 +693,159 @@ def continue_review(review_id: str, body: dict[str, Any] | None = None):
     import threading
     from research_os.launcher import launch_review
 
-    result_holder: dict[str, Any] = {}
+    review.status = "active"
+    store.save(review)
+
+    instructions = (body or {}).get("instructions", "").strip() or None
 
     def run():
         try:
-            result = launch_review(
+            launch_review(
                 topic=review.topic,
                 objective=review.objective,
                 review_id=review.id,
+                instructions=instructions,
             )
-            result_holder.update(result)
         except Exception as e:
-            result_holder["error"] = str(e)
+            import traceback
+            traceback.print_exc()
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    thread.join(timeout=5.0)
 
-    if "error" in result_holder:
-        raise HTTPException(500, result_holder["error"])
-
+    # Return immediately — the agent runs in the background.
+    # Polling on the frontend will detect is_running from log metadata.
     return {
         "review_id": review.id,
-        "log_dir": result_holder.get("log_dir"),
         "status": "launched",
     }
+
+
+def _find_active_run_dir(review: LiteratureReview) -> Path:
+    """Return the directory of the latest active (uncompleted) run, or raise."""
+    from datetime import datetime, timezone
+
+    log_root = Path.home() / ".research-os" / "logs" / review.id[:8]
+    if not log_root.is_dir():
+        raise HTTPException(404, "No runs found for this review")
+
+    for rd in sorted(log_root.iterdir(), reverse=True):
+        if not rd.is_dir():
+            continue
+        meta_path = rd / "meta.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                if meta.get("completed_at"):
+                    raise HTTPException(409, "Agent is not running")
+                # Staleness check — match is_running logic (4-hour cutoff)
+                started = meta.get("started_at")
+                if started:
+                    try:
+                        start_dt = datetime.fromisoformat(started)
+                        age_hours = (datetime.now(timezone.utc) - start_dt).total_seconds() / 3600
+                        if age_hours >= 4:
+                            raise HTTPException(409, "Agent is not running (stale)")
+                    except (ValueError, TypeError):
+                        pass
+                return rd
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(500, str(e))
+        break
+
+    raise HTTPException(404, "No active run found")
+
+
+@router.post("/reviews/{review_id}/stop")
+def stop_review(review_id: str):
+    """Stop a running agent for this review."""
+    store = _get_store()
+    review = _find_review(store, review_id)
+    run_dir = _find_active_run_dir(review)
+
+    meta_path = run_dir / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    pid = meta.get("pid")
+    if not pid:
+        raise HTTPException(500, "No PID recorded for this run")
+    import signal
+    import time
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass  # Already exited
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if not _pid_is_running(pid):
+            break
+        time.sleep(0.1)
+
+    if _pid_is_running(pid):
+        raise HTTPException(409, "Agent termination requested, but the process is still running")
+
+    # Mark as completed
+    from datetime import datetime, timezone
+    meta["completed_at"] = datetime.now(timezone.utc).isoformat()
+    meta["exit_code"] = -15  # SIGTERM
+    meta["stopped_by"] = "user"
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    review.status = "completed"
+    store.save(review)
+
+    return {"review_id": review.id, "status": "stopped"}
+
+
+@router.post("/reviews/{review_id}/steer")
+def steer_review(review_id: str, body: dict[str, Any]):
+    """Send a steering message to a running agent."""
+    store = _get_store()
+    review = _find_review(store, review_id)
+
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(400, "message is required")
+
+    run_dir = _find_active_run_dir(review)
+    steering_path = run_dir / "steering.md"
+
+    from datetime import datetime, timezone
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(steering_path, "a") as f:
+        f.write(f"[{timestamp}] {message}\n")
+
+    return {"review_id": review.id, "status": "sent", "timestamp": timestamp}
+
+
+@router.get("/reviews/{review_id}/steering")
+def get_steering(review_id: str):
+    """Get the current pending steering message for a running agent."""
+    log_root = Path.home() / ".research-os" / "logs" / review_id[:8]
+    if not log_root.is_dir():
+        return {"pending": None}
+
+    for rd in sorted(log_root.iterdir(), reverse=True):
+        if not rd.is_dir():
+            continue
+        meta_path = rd / "meta.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                if meta.get("completed_at"):
+                    return {"pending": None}
+            except Exception:
+                return {"pending": None}
+        steering_path = rd / "steering.md"
+        if steering_path.exists():
+            content = steering_path.read_text().strip()
+            if content:
+                return {"pending": content}
+        return {"pending": None}
+
+    return {"pending": None}
 
 
 @router.post("/reviews/{review_id}/seed")

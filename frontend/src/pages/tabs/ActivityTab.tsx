@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { fetchActivity, fetchSearches, fetchCapabilityRequests, fetchLogs, fetchLogStdout, fetchLogParsed } from '../../api/client';
 import type { ParsedLogEvent, ParsedLogResponse } from '../../api/client';
-import { useFetch } from '../../api/hooks';
+import { useFetch, usePolling } from '../../api/hooks';
 import StatCard from '../../components/StatCard';
 import PaperChip from '../../components/PaperChip';
 import SourceIcon from '../../components/SourceIcon';
@@ -22,8 +22,10 @@ const EVENT_ICONS: Record<string, typeof Search> = {
   report: FileText,
 };
 
-function SearchHistoryTable({ reviewId }: { reviewId: string }) {
-  const { data, loading, error } = useFetch(() => fetchSearches(reviewId), [reviewId]);
+function SearchHistoryTable({ reviewId, isRunning }: { reviewId: string; isRunning: boolean }) {
+  const { data: initialData, loading, error } = useFetch(() => fetchSearches(reviewId), [reviewId]);
+  const { data: polledData } = usePolling(() => fetchSearches(reviewId), 5000, isRunning, [reviewId]);
+  const data = polledData || initialData;
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (loading) return <Loading />;
@@ -176,7 +178,9 @@ function RawLogView({ lines, scrollRef }: { lines: string[]; scrollRef?: React.R
 }
 
 function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boolean }) {
-  const { data, error: logsError } = useFetch(() => fetchLogs(reviewId), [reviewId]);
+  const { data: initialLogs, error: logsError } = useFetch(() => fetchLogs(reviewId), [reviewId]);
+  const { data: polledLogs } = usePolling(() => fetchLogs(reviewId), 5000, isRunning, [reviewId]);
+  const data = polledLogs || initialLogs;
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<'parsed' | 'raw'>('parsed');
   const [parsedData, setParsedData] = useState<ParsedLogResponse | null>(null);
@@ -184,12 +188,10 @@ function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boole
   const [loadingLog, setLoadingLog] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  if (logsError) return <ErrorMessage message={logsError} />;
-  if (!data?.runs?.length) return null;
-  const latestRun = data.runs[0];
+  const latestRun = data?.runs?.[0];
 
   const fetchLogs_ = async () => {
+    if (!latestRun) return;
     try {
       const [parsed, raw] = await Promise.all([
         fetchLogParsed(reviewId, latestRun.dir),
@@ -203,6 +205,7 @@ function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boole
   };
 
   const loadLog = async () => {
+    if (!latestRun) return;
     if (parsedData || rawLines) { setExpanded(!expanded); return; }
     setLoadingLog(true);
     setLogError(null);
@@ -213,7 +216,7 @@ function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boole
 
   // Poll logs when running and expanded
   useEffect(() => {
-    if (!isRunning || !expanded) return;
+    if (!isRunning || !expanded || !latestRun) return;
     const id = setInterval(async () => {
       await fetchLogs_();
       // Auto-scroll to bottom
@@ -223,11 +226,11 @@ function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boole
     }, 3000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning, expanded, reviewId, latestRun.dir]);
+  }, [isRunning, expanded, reviewId, latestRun?.dir]);
 
   // Auto-expand when agent starts running
   useEffect(() => {
-    if (isRunning && !expanded && !parsedData) {
+    if (isRunning && !expanded && !parsedData && latestRun) {
       setLoadingLog(true);
       setLogError(null);
       fetchLogs_().then(() => {
@@ -237,6 +240,9 @@ function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boole
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning]);
+
+  if (logsError) return <ErrorMessage message={logsError} />;
+  if (!latestRun) return null;
 
   return (
     <div className="bg-[var(--color-paper-card)] rounded-xl border border-[var(--color-border)] overflow-hidden">
@@ -296,8 +302,10 @@ function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boole
   );
 }
 
-function CapabilityRequestsList({ reviewId }: { reviewId: string }) {
-  const { data, error } = useFetch(() => fetchCapabilityRequests(reviewId), [reviewId]);
+function CapabilityRequestsList({ reviewId, isRunning }: { reviewId: string; isRunning: boolean }) {
+  const { data: initialData, error } = useFetch(() => fetchCapabilityRequests(reviewId), [reviewId]);
+  const { data: polledData } = usePolling(() => fetchCapabilityRequests(reviewId), 5000, isRunning, [reviewId]);
+  const data = polledData || initialData;
   if (error) return <ErrorMessage message={error} />;
   if (!data?.length) return null;
 
@@ -324,7 +332,9 @@ function CapabilityRequestsList({ reviewId }: { reviewId: string }) {
 }
 
 export default function ActivityTab({ reviewId, isRunning = false }: { reviewId: string; isRunning?: boolean }) {
-  const { data: events, loading, error } = useFetch(() => fetchActivity(reviewId), [reviewId]);
+  const { data: initialEvents, loading, error } = useFetch(() => fetchActivity(reviewId), [reviewId]);
+  const { data: polledEvents } = usePolling(() => fetchActivity(reviewId), 5000, isRunning, [reviewId]);
+  const events = polledEvents || initialEvents;
 
   if (loading) return <Loading />;
   if (error) return <ErrorMessage message={error} />;
@@ -355,7 +365,7 @@ export default function ActivityTab({ reviewId, isRunning = false }: { reviewId:
       )}
 
       {/* Search History */}
-      <SearchHistoryTable reviewId={reviewId} />
+      <SearchHistoryTable reviewId={reviewId} isRunning={isRunning} />
 
       {/* Activity Timeline */}
       {events && events.length > 0 && (
@@ -382,7 +392,7 @@ export default function ActivityTab({ reviewId, isRunning = false }: { reviewId:
       <LogViewer reviewId={reviewId} isRunning={isRunning} />
 
       {/* Capability Requests */}
-      <CapabilityRequestsList reviewId={reviewId} />
+      <CapabilityRequestsList reviewId={reviewId} isRunning={isRunning} />
 
       {!hasEvents && (
         <EmptyState title="No activity" description="No agent activity recorded yet." />

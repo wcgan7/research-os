@@ -151,8 +151,28 @@ export async function createReview(
 
 export async function continueReview(
   reviewId: string,
+  instructions?: string,
 ): Promise<{ review_id: string; status: string }> {
-  return post(`/reviews/${reviewId}/continue`, {});
+  return post(`/reviews/${reviewId}/continue`, instructions ? { instructions } : {});
+}
+
+export async function stopReview(
+  reviewId: string,
+): Promise<{ review_id: string; status: string }> {
+  return post(`/reviews/${reviewId}/stop`, {});
+}
+
+export async function steerReview(
+  reviewId: string,
+  message: string,
+): Promise<{ review_id: string; status: string; timestamp: string }> {
+  return post(`/reviews/${reviewId}/steer`, { message });
+}
+
+export async function fetchSteering(
+  reviewId: string,
+): Promise<{ pending: string | null }> {
+  return get(`/reviews/${reviewId}/steering`);
 }
 
 export async function seedPaper(

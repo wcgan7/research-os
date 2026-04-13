@@ -12,3 +12,4 @@ build/
 .workdoc.md
 node_modules/
 frontend/dist/
+.claude/
