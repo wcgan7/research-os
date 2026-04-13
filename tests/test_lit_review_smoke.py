@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +7,7 @@ from unittest import mock
 
 from research_os.agent.tools import batch_triage
 from research_os.api import routes
+from research_os import launcher
 from research_os.store.db import get_connection, init_schema
 from research_os.store.models import Assessment, LiteratureReview, Paper
 from research_os.store.store import Store
@@ -79,6 +81,93 @@ class LitReviewSmokeTests(unittest.TestCase):
         meta = json.loads(meta_path.read_text())
         self.assertEqual(meta["stopped_by"], "user")
         self.assertEqual(meta["exit_code"], -15)
+        self.assertIn("completed_at", meta)
+
+    def test_get_review_reports_not_running_when_pid_is_dead(self) -> None:
+        review = LiteratureReview(topic="topic", objective="objective", status="active")
+        self.store.save(review)
+        self.store.save(Paper(review_id=review.id, title="Paper"))
+
+        log_root = Path(self.tempdir.name) / ".research-os" / "logs" / review.id[:8]
+        run_dir = log_root / "20260413_000000"
+        run_dir.mkdir(parents=True)
+        (run_dir / "meta.json").write_text(json.dumps({
+            "pid": 54321,
+            "started_at": "2026-04-13T00:00:00+00:00",
+        }))
+
+        with (
+            mock.patch.object(routes, "_get_store", return_value=self.store),
+            mock.patch.object(routes.Path, "home", return_value=Path(self.tempdir.name)),
+            mock.patch.object(routes, "_pid_is_running", return_value=False),
+        ):
+            result = routes.get_review(review.id)
+
+        self.assertFalse(result["is_running"])
+
+    def test_get_steering_clears_pending_for_dead_run(self) -> None:
+        review = LiteratureReview(topic="topic", objective="objective", status="active")
+        self.store.save(review)
+
+        log_root = Path(self.tempdir.name) / ".research-os" / "logs" / review.id[:8]
+        run_dir = log_root / "20260413_000000"
+        run_dir.mkdir(parents=True)
+        (run_dir / "meta.json").write_text(json.dumps({
+            "pid": 54321,
+            "started_at": "2026-04-13T00:00:00+00:00",
+        }))
+        (run_dir / "steering.md").write_text("focus on benchmarks\n")
+
+        with (
+            mock.patch.object(routes.Path, "home", return_value=Path(self.tempdir.name)),
+            mock.patch.object(routes, "_pid_is_running", return_value=False),
+        ):
+            result = routes.get_steering(review.id)
+
+        self.assertEqual(result, {"pending": None})
+
+    def test_launch_review_finalizes_metadata_when_subprocess_errors_after_exit(self) -> None:
+        db_path = Path(self.tempdir.name) / "launcher.sqlite3"
+        cache_dir = Path(self.tempdir.name) / "cache"
+        log_dir = Path(self.tempdir.name) / "logs" / "run"
+        log_dir.mkdir(parents=True)
+
+        class FakeProc:
+            def __init__(self) -> None:
+                self.pid = 12345
+                self.returncode = 7
+
+            def communicate(self, input: str | None = None) -> None:
+                raise RuntimeError("launcher interrupted")
+
+            def poll(self) -> int:
+                return self.returncode
+
+        with (
+            mock.patch.dict(os.environ, {
+                "RESEARCH_OS_DB": str(db_path),
+                "RESEARCH_OS_CACHE": str(cache_dir),
+            }, clear=False),
+            mock.patch.object(launcher, "_make_log_dir", return_value=log_dir),
+            mock.patch.object(launcher.subprocess, "Popen", return_value=FakeProc()),
+            mock.patch.object(launcher.Path, "home", return_value=Path(self.tempdir.name)),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "launcher interrupted"):
+                launcher.launch_review(topic="topic", objective="objective")
+
+        conn = get_connection(db_path)
+        init_schema(conn)
+        store = Store(conn)
+        try:
+            reviews = store.query(LiteratureReview)
+            self.assertEqual(len(reviews), 1)
+            self.assertEqual(reviews[0].status, "paused")
+        finally:
+            conn.close()
+
+        meta = json.loads((log_dir / "meta.json").read_text())
+        self.assertEqual(meta["pid"], 12345)
+        self.assertEqual(meta["exit_code"], 7)
         self.assertIn("completed_at", meta)
 
 

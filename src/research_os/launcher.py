@@ -330,31 +330,34 @@ def launch_review(
     print(f"Log dir: {log_dir}")
     print(f"Launching claude -p ...")
 
-    # Launch as subprocess with log capture
-    with open(stdout_path, "w") as stdout_f, open(stderr_path, "w") as stderr_f:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=stdout_f,
-            stderr=stderr_f,
-            text=True,
-            cwd=str(Path.home() / "Documents" / "research-os"),
-            env=env,
-        )
-        # Store PID so the agent can be stopped from the UI
-        meta["pid"] = proc.pid
-        meta_path.write_text(json.dumps(meta, indent=2))
+    proc: subprocess.Popen[str] | None = None
+    try:
+        # Launch as subprocess with log capture
+        with open(stdout_path, "w") as stdout_f, open(stderr_path, "w") as stderr_f:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=stdout_f,
+                stderr=stderr_f,
+                text=True,
+                cwd=str(Path.home() / "Documents" / "research-os"),
+                env=env,
+            )
+            # Store PID so the agent can be stopped from the UI
+            meta["pid"] = proc.pid
+            meta_path.write_text(json.dumps(meta, indent=2))
 
-        proc.communicate(input=user_prompt)
+            proc.communicate(input=user_prompt)
+    finally:
+        if proc is not None:
+            exit_code = proc.poll()
+            if exit_code is not None and not meta.get("completed_at"):
+                review.status = "completed" if exit_code == 0 else "paused"
+                store.save(review)
 
-    # Update review status
-    review.status = "completed"
-    store.save(review)
-
-    # Save completion metadata
-    meta["completed_at"] = datetime.now(timezone.utc).isoformat()
-    meta["exit_code"] = proc.returncode
-    meta_path.write_text(json.dumps(meta, indent=2))
+                meta["completed_at"] = datetime.now(timezone.utc).isoformat()
+                meta["exit_code"] = exit_code
+                meta_path.write_text(json.dumps(meta, indent=2))
 
     print(f"\nCompleted with exit code {proc.returncode}")
     print(f"Logs: {log_dir}")

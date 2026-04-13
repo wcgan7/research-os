@@ -123,39 +123,46 @@ export default function ReviewWorkspace() {
   // Initial fetch
   const { data: initialReview, loading, error } = useFetch(() => fetchReview(reviewId!), [reviewId, refreshKey]);
 
-  const review = initialReview;
-  const isRunning = (review?.is_running || false) || continuing;
-
-  // Poll when running
+  // Poll when running — use a ref to track effective running state so polling
+  // doesn't stop prematurely when `continuing` is cleared.
+  const [pollEnabled, setPollEnabled] = useState(false);
   const { data: polledReview } = usePolling(
     () => fetchReview(reviewId!),
     5000,
-    isRunning,
+    pollEnabled,
     [reviewId],
   );
 
   const currentReview = polledReview || initialReview;
-  const currentIsRunning = (currentReview?.is_running || false) || continuing;
 
-  // Once the backend has answered after a launch/continue request, stop using
-  // the optimistic local override and trust the server's run state.
+  // Keep polling enabled while the backend says the agent is running OR we just launched
   useEffect(() => {
-    if (continuing && polledReview) {
+    if (continuing || currentReview?.is_running) {
+      setPollEnabled(true);
+    } else {
+      setPollEnabled(false);
+    }
+  }, [continuing, currentReview?.is_running]);
+
+  // Once a fresh poll confirms the agent is running after a launch, stop using
+  // the optimistic local `continuing` flag and let the server drive state.
+  useEffect(() => {
+    if (continuing && polledReview?.is_running) {
       if (continueTimer.current) clearTimeout(continueTimer.current);
       setContinuing(false);
     }
-  }, [continuing, polledReview]);
+  }, [continuing, polledReview?.is_running]);
 
   // Poll for pending steering messages
   const { data: steeringData } = usePolling(
     () => fetchSteering(reviewId!),
     3000,
-    isRunning,
+    pollEnabled,
     [reviewId],
   );
 
   // Detect when agent finishes — refresh tab content
-  const prevRunning = useRef(currentIsRunning);
+  const prevRunning = useRef(pollEnabled);
   useEffect(() => {
     if (prevRunning.current && !currentReview?.is_running) {
       // Agent just finished — refresh everything
@@ -290,7 +297,7 @@ export default function ReviewWorkspace() {
               <div className="flex items-center gap-3">
                 <h1 className="font-serif text-xl text-[var(--color-ink)] truncate">{currentReview.topic}</h1>
                 <StatusBadge status={currentReview.status} />
-                {currentReview.is_running && (
+                {pollEnabled && (
                   <span className="flex items-center gap-1.5 text-xs text-[var(--color-active)] font-medium">
                     <Loader2 size={13} className="animate-spin" />
                     Agent running
@@ -307,7 +314,7 @@ export default function ReviewWorkspace() {
                 <Plus size={15} aria-hidden="true" />
                 Seed Paper
               </button>
-              {(currentReview.is_running || continuing) ? (
+              {pollEnabled ? (
                 <button
                   onClick={handleStop}
                   disabled={stopping}
@@ -383,7 +390,7 @@ export default function ReviewWorkspace() {
           )}
 
           {/* Steering input — only when agent is running */}
-          {(currentReview.is_running || continuing) && (
+          {pollEnabled && (
             <div className="pb-3">
               <form onSubmit={handleSteer} className="flex items-center gap-2">
                 <input
@@ -454,7 +461,7 @@ export default function ReviewWorkspace() {
         {activeTab === 'papers' && <PapersTab reviewId={reviewId!} key={refreshKey} />}
         {activeTab === 'coverage' && <CoverageTab reviewId={reviewId!} key={refreshKey} />}
         {activeTab === 'notes' && <NotesTab reviewId={reviewId!} key={refreshKey} />}
-        {activeTab === 'activity' && <ActivityTab reviewId={reviewId!} isRunning={currentIsRunning} key={refreshKey} />}
+        {activeTab === 'activity' && <ActivityTab reviewId={reviewId!} isRunning={pollEnabled} key={refreshKey} />}
         {activeTab === 'resources' && <ResourcesTab reviewId={reviewId!} key={refreshKey} />}
       </main>
 

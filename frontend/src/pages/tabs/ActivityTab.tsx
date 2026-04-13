@@ -192,16 +192,30 @@ function LogViewer({ reviewId, isRunning }: { reviewId: string; isRunning: boole
 
   const fetchLogs_ = async () => {
     if (!latestRun) return;
-    try {
-      const [parsed, raw] = await Promise.all([
-        fetchLogParsed(reviewId, latestRun.dir),
-        fetchLogStdout(reviewId, latestRun.dir, 500),
-      ]);
-      setParsedData(parsed);
-      setRawLines(raw.lines);
-    } catch (e) {
-      setLogError(e instanceof Error ? e.message : "Failed to load log");
+    const [parsedResult, rawResult] = await Promise.allSettled([
+      fetchLogParsed(reviewId, latestRun.dir),
+      fetchLogStdout(reviewId, latestRun.dir, 500),
+    ]);
+
+    let nextError: string | null = null;
+
+    if (parsedResult.status === 'fulfilled') {
+      setParsedData(parsedResult.value);
+    } else if (!parsedData) {
+      nextError = parsedResult.reason instanceof Error ? parsedResult.reason.message : 'Failed to load parsed log';
     }
+
+    if (rawResult.status === 'fulfilled') {
+      setRawLines(rawResult.value.lines);
+    } else if (!rawLines) {
+      nextError = rawResult.reason instanceof Error ? rawResult.reason.message : 'Failed to load raw log';
+    }
+
+    if (parsedResult.status === 'rejected' && rawResult.status === 'rejected') {
+      nextError = parsedResult.reason instanceof Error ? parsedResult.reason.message : 'Failed to load log';
+    }
+
+    setLogError(nextError);
   };
 
   const loadLog = async () => {
