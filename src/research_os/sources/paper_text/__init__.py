@@ -60,11 +60,6 @@ def fetch_paper_text(
         if text:
             return text, source
 
-        # Fallback to abstract
-        abstract = fetch_arxiv_abstract(aid)
-        if abstract:
-            return abstract, "arxiv_abstract"
-
     # 2. DOI-based OA lookup
     if doi:
         d = doi.strip()
@@ -87,14 +82,5 @@ def fetch_paper_text(
         text, source, _ = try_oa_candidates(candidates)
         if text:
             return text, source
-
-        # Abstract fallbacks
-        abstract = fetch_crossref_abstract(d)
-        if abstract:
-            return abstract, "crossref_abstract"
-
-        abstract = fetch_openalex_abstract(d)
-        if abstract:
-            return abstract, "openalex_abstract"
 
     return None, None

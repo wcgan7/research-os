@@ -838,8 +838,8 @@ def fetch_paper_text(
     if not paper:
         return ToolResult(ok=False, error=f"Paper not found: {paper_id}")
 
-    # Return cached if already fetched
-    if paper.full_text:
+    # Return cached if already fetched (but not if it's just an abstract)
+    if paper.full_text and paper.full_text_source and "abstract" not in paper.full_text_source:
         return ToolResult(ok=True, data={
             "paper_id": paper_id,
             "title": paper.title,

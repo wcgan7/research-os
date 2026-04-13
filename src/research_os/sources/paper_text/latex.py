@@ -51,6 +51,15 @@ def fetch_arxiv_eprint_full_text(arxiv_id: str) -> str | None:
     if resp.status_code != 200 or not resp.content:
         return None
 
+    # Some e-prints are plain PDFs, not tarballs — delegate to PDF extractor
+    content_type = (resp.headers.get("content-type") or "").lower()
+    if "pdf" in content_type or resp.content[:5] == b"%PDF-":
+        from research_os.sources.paper_text.pdf import extract_pdf_text
+        text = extract_pdf_text(resp.content)
+        if text and is_fulltext_quality_sufficient(text):
+            return text
+        return None
+
     try:
         with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:*") as tf:
             tex_chunks: list[str] = []

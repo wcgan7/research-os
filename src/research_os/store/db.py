@@ -11,10 +11,10 @@ from typing import Union, get_args, get_origin
 from research_os.store.models import ALL_RECORD_TYPES
 
 
-def get_connection(db_path: Path) -> sqlite3.Connection:
+def get_connection(db_path: Path, check_same_thread: bool = True) -> sqlite3.Connection:
     """Open (or create) the SQLite database."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), check_same_thread=check_same_thread)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row

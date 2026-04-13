@@ -58,7 +58,8 @@ decisions as you work.
 - Search multiple sources for the same concept — they index different papers
 - Use your native WebSearch tool for specific paper names or to find papers that academic APIs miss
 - Never guess arXiv IDs from memory — they are frequently wrong. Use URLs from search results or search by title
-- When a paper looks highly relevant, expand its references and use WebFetch to read its full content
+- When a paper looks highly relevant, expand its references and call fetch_paper_text to read its full content
+- Call fetch_paper_text on ALL essential and relevant papers — abstracts are not enough for a good review
 - Use batch_triage to quickly process many papers instead of individual assessments
 - Track resources (code, datasets, demos, blogs) — these are critical for downstream work
 - Keep notes as you go — especially contradictions and surprising findings

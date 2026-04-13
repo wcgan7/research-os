@@ -148,6 +148,7 @@ def review_summary(review_id: str):
         status_counts[p.status] = status_counts.get(p.status, 0) + 1
 
     papers_with_resources = sum(1 for p in papers if p.resources)
+    papers_with_full_text = sum(1 for p in papers if p.full_text)
 
     summary = {
         "ok": True,
@@ -162,6 +163,7 @@ def review_summary(review_id: str):
             "total_searches": len(searches),
             "total_notes": len(notes),
             "papers_with_resources": papers_with_resources,
+            "papers_with_full_text": papers_with_full_text,
             "recent_searches": [
                 {"query": s.query, "source": s.source, "result_count": s.result_count}
                 for s in searches[:10]

@@ -10,3 +10,5 @@ build/
 .overdrive/
 .overdrive_archive/
 .workdoc.md
+node_modules/
+frontend/dist/
