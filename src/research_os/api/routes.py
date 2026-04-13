@@ -786,14 +786,14 @@ def stop_review(review_id: str):
     if _pid_is_running(pid):
         raise HTTPException(409, "Agent termination requested, but the process is still running")
 
-    # Mark as completed
+    # Mark the run as stopped, but leave the review resumable.
     from datetime import datetime, timezone
     meta["completed_at"] = datetime.now(timezone.utc).isoformat()
     meta["exit_code"] = -15  # SIGTERM
     meta["stopped_by"] = "user"
     meta_path.write_text(json.dumps(meta, indent=2))
 
-    review.status = "completed"
+    review.status = "paused"
     store.save(review)
 
     return {"review_id": review.id, "status": "stopped"}

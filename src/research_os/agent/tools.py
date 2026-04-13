@@ -643,6 +643,10 @@ def batch_triage(
 
     Each decision: {"paper_id": "...", "relevance": "relevant|not_relevant|uncertain|deferred", "reason": "..."}
     For relevant papers, optionally include "key_claims": [...] for quick notes.
+
+    Only decisions that map to the canonical assessment schema create Assessment
+    records. "uncertain" and "deferred" remain paper statuses without creating
+    an incompatible Assessment.relevance value.
     """
     store: Store = ctx["store"]
     review_id: str = ctx["review_id"]
@@ -665,15 +669,15 @@ def batch_triage(
             errors.append(f"{paper_id}: not found")
             continue
 
-        # Create a lightweight assessment
-        assessment = Assessment(
-            review_id=review_id,
-            paper_id=paper_id,
-            relevance=relevance,
-            rationale=reason,
-            key_claims=d.get("key_claims", []),
-        )
-        store.save(assessment)
+        if relevance in {"relevant", "not_relevant"}:
+            assessment = Assessment(
+                review_id=review_id,
+                paper_id=paper_id,
+                relevance=relevance,
+                rationale=reason,
+                key_claims=d.get("key_claims", []),
+            )
+            store.save(assessment)
 
         paper.status = relevance
         store.save(paper)
